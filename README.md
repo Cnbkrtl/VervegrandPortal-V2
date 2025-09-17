@@ -1,154 +1,270 @@
-# 🔄 XML to Shopify Sync - Streamlit Edition
+# 🔄 Vervegrand Portal V2
 
-**Professional XML to Shopify synchronization tool built with Python & Streamlit**
+**Profesyonel E-ticaret Entegrasyon ve Yönetim Platformu**
 
-> ⚠️ **Migration Complete**: This project has been fully migrated from React/Netlify to Python/Streamlit to eliminate timeout limitations and provide direct API access.
+Sentos ERP sistemi ile Shopify mağazanızı senkronize eden, kapsamlı fiyat hesaplama araçları ve medya yönetimi sunan gelişmiş Python/Streamlit uygulaması.
 
-## 🚀 Features
+## 🚀 Temel Özellikler
 
-- **✅ Direct Shopify API Integration** - No proxy limitations
-- **✅ Unlimited Processing Time** - No 26-second timeout restrictions  
-- **✅ Real-time Progress Tracking** - Live sync monitoring
-- **✅ Advanced XML Parsing** - CDATA support, error handling
-- **✅ Smart Product Matching** - SKU-based matching with similarity algorithms
-- **✅ Bulk Operations** - Create/update products with variants
-- **✅ Test Mode** - Process first 5 products for testing
-- **✅ Fast Mode** - Optimized for large XML files
-- **✅ CSV Export** - Download detailed sync results
+### 🔗 **Çoklu API Entegrasyonu**
+- **Shopify Admin API** - Ürün, stok ve fiyat yönetimi
+- **Sentos ERP API** - ERP sistemi entegrasyonu  
+- **Google Sheets API** - Fiyat verilerinin yönetimi
+- **Rate Limiting** - Akıllı API hız sınırlama
 
-## 📋 Migration Summary
+### � **Gelişmiş Dashboard & Raporlama**
+- **Gerçek Zamanlı Durum İzleme** - API bağlantı durumları
+- **Detaylı Metrikler** - Ürün sayıları, sync istatistikleri
+- **Excel/CSV Export** - Kapsamlı raporlama
+- **Log Yönetimi** - Sistem aktivite takibi
 
-| Component | Before (JavaScript) | After (Python) | Status |
-|-----------|-------------------|----------------|--------|
-| Frontend | React + Vite | Streamlit | ✅ Complete |
-| Backend | Netlify Functions | Direct Python | ✅ Complete |
-| Timeout | 26 seconds | Unlimited | ✅ Solved |
-| API Access | Proxied | Direct | ✅ Improved |
-| Progress | Basic | Real-time | ✅ Enhanced |
+### 💰 **Fiyat Hesaplama Motoru**
+- **Dinamik Fiyatlama** - Maliyet + kar marjı hesaplamaları
+- **KDV Hesaplamaları** - Otomatik vergi hesaplaması
+- **Toplu Fiyat Güncelleme** - Binlerce ürün için batch işlem
+- **Google Sheets Entegrasyonu** - Fiyat verilerinin merkezi yönetimi
 
-## 🛠️ Quick Start
+### 🔄 **Akıllı Senkronizasyon**
+- **İki Yönlü Sync** - Sentos ↔ Shopify
+- **Seçici Sync** - Sadece eksik ürünler
+- **Media Sync** - Ürün görselleri senkronizasyonu
+- **Çakışma Çözümü** - Akıllı veri birleştirme
 
-### 1. Install Python
-Download Python 3.9+ from [python.org](https://www.python.org/downloads/)
-- ⚠️ **Important**: Check "Add Python to PATH" during installation
+### 🔐 **Güvenlik & Kullanıcı Yönetimi**
+- **Multi-User Authentication** - Streamlit Authenticator
+- **Kullanıcı Bazlı Konfigürasyon** - Her kullanıcının kendi API anahtarları
+- **Session Management** - Güvenli oturum yönetimi
+- **Encrypted Secrets** - Şifrelenmiş konfigürasyon
 
-### 2. Run the App
-**Windows (Easy Way):**
+## 🏗️ Mimari & Proje Yapısı
+
+```
+📦 VervegrandPortal-V2/
+├── 🐍 streamlit_app.py          # Ana uygulama ve authentication
+├── 🔧 config_manager.py         # Konfigürasyon yönetimi
+├── 📊 data_manager.py           # Veri yönetimi ve cache
+├── 📝 gsheets_manager.py        # Google Sheets entegrasyonu
+├── 📋 requirements.txt          # Python bağımlılıkları
+├── ⚙️ config.yaml              # Kullanıcı konfigürasyonu
+├── � start_app.bat            # Windows başlatıcısı
+│
+├── 📂 pages/                    # Streamlit sayfaları
+│   ├── 1_dashboard.py          # Ana dashboard
+│   ├── 2_settings.py           # API ayarları
+│   ├── 3_sync.py               # Senkronizasyon kontrolü
+│   ├── 4_logs.py               # Log görüntüleme
+│   ├── 5_export.py             # Veri dışa aktarma
+│   └── 6_Fiyat_Hesaplayıcı.py  # Fiyat hesaplama motoru
+│
+├── 📂 connectors/               # API bağlayıcıları
+│   ├── shopify_api.py          # Shopify API wrapper
+│   └── sentos_api.py           # Sentos API wrapper
+│
+├── 📂 operations/               # İş mantığı modülleri
+│   ├── core_sync.py            # Temel sync işlemleri
+│   ├── price_sync.py           # Fiyat senkronizasyonu
+│   ├── stock_sync.py           # Stok senkronizasyonu
+│   ├── media_sync.py           # Medya senkronizasyonu
+│   └── smart_rate_limiter.py   # Rate limiting
+│
+└── 📂 data_cache/               # Önbellek verileri
+```
+
+## 🛠️ Kurulum & Başlangıç
+
+### 1. Sistem Gereksinimleri
+- **Python 3.9+** (Önerilen: 3.11+)
+- **Windows/macOS/Linux** desteği
+- **Internet bağlantısı** (API erişimi için)
+
+### 2. Hızlı Kurulum
+
+**Windows (Kolay Yol):**
 ```bash
-# Just double-click this file:
+# Repo'yu klonlayın
+git clone [repo-url]
+cd VervegrandPortal-V2
+
+# Otomatik başlatıcıyı çalıştırın
 start_app.bat
 ```
 
-**Manual Way:**
+**Manuel Kurulum:**
 ```bash
-# Install dependencies
+# Bağımlılıkları yükleyin
 pip install -r requirements.txt
 
-# Run the app
+# Uygulamayı başlatın
 streamlit run streamlit_app.py
 ```
 
-### 3. Configure & Sync
-1. Open `http://localhost:8501` in your browser
-2. Enter your Shopify credentials in the sidebar
-3. Add your XML URL
-4. Test connections
-5. Start synchronization!
+### 3. İlk Konfigürasyon
+1. **`http://localhost:8501`** adresine gidin
+2. **Giriş yapın** (varsayılan: admin/[config.yaml'dan])
+3. **Settings** sayfasından API anahtarlarınızı girin:
+   - Shopify Store URL ve Access Token
+   - Sentos API bilgileri
+   - Google Sheets konfigürasyonu
+4. **Dashboard**'da bağlantı durumlarını kontrol edin
 
-## 📁 Project Structure
+## 🔧 Konfigürasyon Detayları
 
-```
-📦 streamlit-shopify-sync/
-├── 🐍 streamlit_app.py      # Main Streamlit application
-├── 🔧 shopify_sync.py       # Core sync logic & API functions
-├── 📋 requirements.txt      # Python dependencies
-├── 🚀 start_app.bat         # Easy Windows launcher
-├── 📖 README.md             # This file
-└── 📚 README_STREAMLIT.md   # Detailed technical docs
-```
-
-## 🔧 Configuration
-
-### Shopify Settings
-- **Store URL**: `your-store.myshopify.com`
-- **Access Token**: Admin API access token
-- **Required Permissions**: `read_products`, `write_products`, `write_inventory`
-
-### XML Format
-Supports Sentos XML format with CDATA sections:
-```xml
-<Urun>
-    <StokKodu><![CDATA[PRODUCT-001]]></StokKodu>
-    <UrunAdi><![CDATA[Product Name]]></UrunAdi>
-    <Aciklama><![CDATA[Product Description]]></Aciklama>
-    <SatisFiyati1>99.99</SatisFiyati1>
-    <StokMiktari>10</StokMiktari>
-    <!-- ... more fields ... -->
-</Urun>
+### Shopify API Ayarları
+```yaml
+# Gerekli izinler:
+- read_products
+- write_products  
+- read_inventory
+- write_inventory
+- read_orders
 ```
 
-## 🎯 Sync Process
+### Sentos ERP Entegrasyonu
+```python
+# API Endpoint formatı:
+https://your-sentos-instance.com/api/
+```
 
-1. **📄 XML Analysis** - Parse products from XML
-2. **🔍 Product Matching** - Find existing products by SKU
-3. **🆕 Create New** - Add products that don't exist
-4. **🔄 Update Existing** - Sync prices, stock, descriptions
-5. **📊 Generate Report** - Detailed results with export
+### Google Sheets Entegrasyonu
+- **Service Account** JSON dosyası
+- **Sheet ID** ve **Worksheet** adları
+- **Otomatik backup** ve **versioning**
 
-## 🆚 Why Migrate from React/Netlify?
+## 📈 Performans & Optimizasyon
 
-### ❌ Previous Limitations:
-- 26-second function timeout causing 504 errors
-- Serverless memory constraints  
-- Proxy/CORS complications
-- Limited debugging capabilities
+### 🚀 **Hız Optimizasyonları**
+- **10-Worker Threading** - Paralel işlem
+- **Smart Rate Limiting** - API sınırlarına uyum
+- **Intelligent Caching** - Tekrarlayan çağrıları azaltma
+- **Batch Operations** - Toplu işlemler
 
-### ✅ Streamlit Advantages:
-- Unlimited processing time
-- Direct API connections
-- Better error handling
-- Real-time progress tracking
-- Local resource utilization
-- Enhanced debugging
+### 📊 **Kaynak Yönetimi**
+- **Memory Streaming** - Büyük veri setleri için
+- **Progressive Loading** - Aşamalı yükleme
+- **Error Recovery** - Otomatik yeniden deneme
+- **Graceful Degradation** - Hata durumunda devam etme
 
-## 📊 Performance
+## 🔄 Senkronizasyon Türleri
 
-- **Large XML Files**: ✅ No timeout restrictions
-- **Bulk Operations**: ✅ Processes thousands of products
-- **Memory Usage**: ✅ Efficient streaming
-- **API Rate Limits**: ✅ Automatic throttling
+### 1. **Tam Senkronizasyon**
+- Tüm ürünleri Sentos'tan Shopify'a aktarır
+- Mevcut ürünleri günceller
+- Yeni ürünler oluşturur
+
+### 2. **Eksik Ürün Sync**
+- Sadece Shopify'da olmayan ürünleri ekler
+- Mevcut ürünlere dokunmaz
+- Hızlı tamamlanır
+
+### 3. **Fiyat Sync**
+- Sadece fiyat bilgilerini günceller
+- KDV hesaplamaları dahil
+- Google Sheets ile entegre
+
+### 4. **Medya Sync**
+- Ürün görsellerini senkronize eder
+- Sentos'tan Shopify'a aktarım
+- Otomatik URL yönetimi
+
+## 💰 Fiyat Hesaplama Sistemi
+
+### Hesaplama Formülleri
+```python
+# Temel fiyat hesaplama
+satis_fiyati = (maliyet_fiyati * (1 + kar_marji)) * (1 + kdv_orani)
+
+# Dinamik kar marjı
+kar_marji = base_margin + kategori_margin + volume_discount
+```
+
+### Özellikler
+- **Kategori Bazlı Marjlar** - Ürün grubuna göre farklı kar oranları
+- **Hacim İndirimleri** - Stok miktarına göre fiyat ayarlaması
+- **KDV Hesaplamaları** - Otomatik vergi hesaplaması
+- **Toplu Güncelleme** - Binlerce ürün için batch işlem
+
+## 🔐 Güvenlik
+
+### Authentication
+- **Bcrypt Password Hashing** - Güvenli şifre saklama
+- **Session Cookies** - Güvenli oturum yönetimi
+- **Auto Logout** - Otomatik oturum sonlandırma
+
+### API Security
+- **Token Encryption** - Şifrelenmiş API anahtarları
+- **Rate Limiting** - DDoS koruması
+- **Error Masking** - Güvenlik bilgilerinin gizlenmesi
 
 ## 🚨 Troubleshooting
 
-### Python Not Found
+### Yaygın Sorunlar
+
+**Python bulunamıyor:**
 ```bash
-# Download Python from python.org
-# Make sure "Add to PATH" is checked during installation
+# Python'u PATH'e ekleyin veya tam yol kullanın
+python --version
 ```
 
-### Port Already in Use
+**Port zaten kullanımda:**
 ```bash
 streamlit run streamlit_app.py --server.port 8502
 ```
 
-### Dependencies Error
+**Bağımlılık hataları:**
 ```bash
-python -m pip install --upgrade pip
-python -m pip install streamlit requests pandas lxml
+pip install --upgrade pip
+pip install -r requirements.txt --force-reinstall
 ```
 
-## 🤝 Support
+**API bağlantı sorunları:**
+- API anahtarlarınızı kontrol edin
+- Network bağlantınızı test edin
+- Rate limiting durumunu kontrol edin
 
-For issues or questions:
-1. Check `README_STREAMLIT.md` for detailed docs
-2. Review error messages in the Streamlit interface
-3. Test connections before running full sync
+## 📊 Monitoring & Logs
 
-## 📈 Version History
+### Log Seviyeler
+- **INFO** - Normal işlemler
+- **WARNING** - Dikkat gerektiren durumlar  
+- **ERROR** - Hata durumları
+- **DEBUG** - Geliştirici bilgileri
 
-- **v2.0** - Python/Streamlit migration (Current)
-- **v1.x** - React/Netlify version (Deprecated)
+### Metrikler
+- **API Response Times** - Performans izleme
+- **Success/Error Rates** - Başarı oranları
+- **Sync Statistics** - Senkronizasyon istatistikleri
+- **Resource Usage** - Kaynak kullanımı
+
+## 🤝 Katkıda Bulunma
+
+### Geliştirme Ortamı
+```bash
+# Geliştirme modunda çalıştırın
+streamlit run streamlit_app.py --server.runOnSave true
+```
+
+### Code Style
+- **PEP 8** uyumluluğu
+- **Type Hints** kullanımı
+- **Docstring** zorunluluğu
+- **Error Handling** standartları
+
+## 📈 Roadmap & Gelecek Özellikler
+
+- [ ] **Advanced Analytics Dashboard**
+- [ ] **Webhook Support** - Otomatik senkronizasyon
+- [ ] **Multi-Store Management** - Çoklu mağaza desteği
+- [ ] **API Documentation** - Swagger/OpenAPI
+- [ ] **Mobile Responsive UI** - Mobil uyumluluk
+- [ ] **Advanced Reporting** - BI entegrasyonu
+
+## 📄 License & İletişim
+
+**Lisans:** MIT License  
+**Geliştirici:** Can Bakırtel  
+**E-posta:** cnbkrtl11@gmail.com  
+**Versiyon:** 2.0.0  
 
 ---
 
-**Built with ❤️ using Python & Streamlit** | No more timeouts! 🎉
+**🔥 Profesyonel E-ticaret Entegrasyonu için Geliştirildi** | Python ❤️ Streamlit
