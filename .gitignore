@@ -34,3 +34,4 @@ credentials.enc
 *.enc
 .secret.key
 data_cache/
+config.yaml
