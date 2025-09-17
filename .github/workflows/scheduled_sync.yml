@@ -1,0 +1,130 @@
+# .github/workflows/scheduled_sync.yml - 10-Worker Optimized
+
+name: Scheduled Stock and Variant Sync (10-Worker)
+
+on:
+  # Her 2 saatte bir otomatik çalıştır
+  schedule:
+    - cron: '0 */2 * * *'
+  
+  # Manuel trigger ile ek seçenekler
+  workflow_dispatch:
+    inputs:
+      sync_mode:
+        description: 'Sync Mode'
+        required: true
+        default: 'Sadece Stok ve Varyantlar'
+        type: choice
+        options:
+        - 'Sadece Stok ve Varyantlar'
+        - 'Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)'
+        - 'Sadece Resimler'
+        - 'SEO Alt Metinli Resimler'
+        - 'Sadece Açıklamalar'
+      max_workers:
+        description: 'Max Workers (1-10)'
+        required: true
+        default: '8'
+        type: string
+
+jobs:
+  sync-products:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 saat timeout
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment variables
+        run: |
+          echo "🔍 Validating GitHub Secrets..."
+          python -c "
+          import os
+          required = ['SHOPIFY_STORE', 'SHOPIFY_TOKEN', 'SENTOS_API_URL', 'SENTOS_API_KEY', 'SENTOS_API_SECRET']
+          missing = [var for var in required if not os.getenv(var)]
+          if missing:
+              print(f'❌ Missing required secrets: {missing}')
+              exit(1)
+          else:
+              print('✅ All required secrets present')
+              print(f'🏪 Store: {os.getenv(\"SHOPIFY_STORE\")}')
+              print(f'🔑 API URL: {os.getenv(\"SENTOS_API_URL\")}')
+          "
+        env:
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          SENTOS_API_URL: ${{ secrets.SENTOS_API_URL }}
+          SENTOS_API_KEY: ${{ secrets.SENTOS_API_KEY }}
+          SENTOS_API_SECRET: ${{ secrets.SENTOS_API_SECRET }}
+          SENTOS_COOKIE: ${{ secrets.SENTOS_COOKIE }}
+
+      - name: Run 10-Worker Product Sync
+        id: sync
+        env:
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          SENTOS_API_URL: ${{ secrets.SENTOS_API_URL }}
+          SENTOS_API_KEY: ${{ secrets.SENTOS_API_KEY }}
+          SENTOS_API_SECRET: ${{ secrets.SENTOS_API_SECRET }}
+          SENTOS_COOKIE: ${{ secrets.SENTOS_COOKIE }}
+          SYNC_MODE: ${{ github.event.inputs.sync_mode || 'Sadece Stok ve Varyantlar' }}
+          MAX_WORKERS: ${{ github.event.inputs.max_workers || '8' }}
+        run: |
+          echo "🚀 Starting 10-worker sync system..."
+          echo "📋 Mode: $SYNC_MODE"
+          echo "👥 Workers: $MAX_WORKERS"
+          echo "⏰ Started at: $(date)"
+          python run_scheduled_sync.py
+
+      - name: Create sync summary
+        if: always()
+        run: |
+          echo "## 📊 10-Worker Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Mode**: ${{ env.SYNC_MODE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workers**: ${{ env.MAX_WORKERS }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ steps.sync.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.sync.outputs.sync_status }}" = "success" ]; then
+            echo "- **✅ Processed**: ${{ steps.sync.outputs.total_processed }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **🔄 Updated**: ${{ steps.sync.outputs.total_updated }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **❌ Failed**: ${{ steps.sync.outputs.total_failed }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **Sync completed successfully with 10-worker system!**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **❌ Status**: Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Sync failed - check logs for details**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-sync-logs-${{ github.run_number }}
+          path: |
+            *.log
+            sync_*.json
+          retention-days: 7
+
+      - name: Performance metrics
+        if: success()
+        run: |
+          echo "🚀 10-Worker Performance Metrics:"
+          echo "- Parallel processing with up to ${{ env.MAX_WORKERS }} workers"
+          echo "- Smart rate limiting with adaptive throttling"
+          echo "- Bulk API operations for maximum efficiency"
+          echo "- 2024-10 Shopify API compatibility"

@@ -1,0 +1,16 @@
+streamlit
+requests
+pandas
+cryptography
+streamlit-authenticator>=0.3.0
+PyYAML
+bcrypt
+openpyxl
+XlsxWriter
+gspread==5.12.0
+gspread-dataframe==3.3.0
+oauth2client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+numpy
