@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from operations.log_manager import log_manager
-from config_manager import ConfigManager
+import config_manager
 
 def load_css():
     try:
@@ -194,62 +194,53 @@ try:
             selected_idx = st.selectbox(
                 "Log seçin:",
                 range(len(df)),
-                format_func=lambda x: f"{pd.to_datetime(df.iloc[x]['timestamp']).strftime('%Y-%m-%d %H:%M')} - {df.iloc[x]['log_type']}"
+                format_func=lambda x: f"{df.iloc[x]['timestamp'].strftime('%Y-%m-%d %H:%M')} - {df.iloc[x]['log_type']}"
             )
-            
+
             if selected_idx is not None:
-                log_detail = df.iloc[selected_idx]
-                
-                # --- YENİ EKLENEN BÖLÜM ---
-                # Config'den Shopify mağaza URL'sini dinamik olarak al
+                log_detail = df.iloc[selected_idx].to_dict()
+                base_shopify_url = None
                 try:
-                    config = ConfigManager()
-                    shopify_store_url_full = config.get('shopify_store_url') # örn: https://your-store.myshopify.com
-                    # URL'nin sadece ana kısmını al (örn: https://your-store.myshopify.com)
-                    base_shopify_url = '/'.join(shopify_store_url_full.split('/')[:3])
+                    shopify_store_url_full = config_manager.get('shopify_store_url')
+                    if shopify_store_url_full:
+                        base_shopify_url = '/'.join(shopify_store_url_full.split('/')[:3])
+                    else:
+                        st.warning("Shopify mağaza URL'si config dosyasında bulunamadı veya boş.")
                 except Exception as e:
-                    st.warning(f"Shopify mağaza URL'si alınamadı: {e}")
-                    base_shopify_url = None
-                # --- YENİ BÖLÜM SONU ---
-                
+                    st.error(f"Config dosyasından URL alınırken hata oluştu: {e}")
+
                 col1, col2 = st.columns(2)
-                
                 with col1:
                     st.write("**Temel Bilgiler:**")
-                    st.write(f"- **ID:** {log_detail['id']}")
-                    st.write(f"- **Zaman:** {log_detail['timestamp']}")
-                    st.write(f"- **Tip:** {log_detail['log_type']}")
-                    st.write(f"- **Durum:** {log_detail['status']}")
-                    st.write(f"- **Kaynak:** {log_detail['source']}")
+                    st.write(f"- **ID:** {log_detail.get('id')}")
+                    st.write(f"- **Zaman:** {log_detail.get('timestamp')}")
+                    st.write(f"- **Tip:** {log_detail.get('log_type')}")
+                    st.write(f"- **Durum:** {log_detail.get('status')}")
+                    st.write(f"- **Kaynak:** {log_detail.get('source')}")
                     if log_detail.get('user_id'):
-                        st.write(f"- **Kullanıcı:** {log_detail['user_id']}")
-                
+                        st.write(f"- **Kullanıcı:** {log_detail.get('user_id')}")
+
                 with col2:
                     st.write("**İstatistikler:**")
                     stats_keys = ['total_products', 'processed', 'created', 'updated', 'failed', 'skipped', 'duration', 'worker_count']
                     for key in stats_keys:
-                        if pd.notna(log_detail.get(key)) and log_detail.get(key) is not None:
+                        if pd.notna(log_detail.get(key)):
                              st.write(f"- **{key.replace('_', ' ').capitalize()}:** {log_detail[key]}")
 
-                if log_detail.get('error_message') and pd.notna(log_detail['error_message']):
+                if pd.notna(log_detail.get('error_message')):
                     st.write("**Hata Mesajı:**")
                     st.error(log_detail['error_message'])
-                
-                if log_detail.get('details') and pd.notna(log_detail['details']):
+
+                if pd.notna(log_detail.get('details')):
                     st.write("**Detaylar ve Bağlantılar:**")
                     try:
                         details_data = json.loads(log_detail['details'])
-                        
-                        # --- YENİ EKLENEN BÖLÜM ---
-                        # Eğer işlenen ürünler listesi varsa, linkleri oluştur
-                        if base_shopify_url and 'processed_products' in details_data and details_data['processed_products']:
+                        if base_shopify_url and 'processed_products' in details_data and details_data.get('processed_products'):
                             st.write("**İşlenen Ürünlere Hızlı Erişim:**")
-                            
                             product_links = []
                             for product in details_data['processed_products']:
                                 if 'id' in product:
                                     try:
-                                        # GID formatından (gid://shopify/Product/12345) numerik ID'yi (12345) al
                                         numeric_id = product['id'].split('/')[-1]
                                         product_url = f"{base_shopify_url}/admin/products/{numeric_id}"
                                         product_title = product.get('title', f"ID: {numeric_id}")
@@ -258,14 +249,10 @@ try:
                                         product_links.append(f"- Ürün ID'si ayrıştırılamadı: {product.get('id')}")
                                 else:
                                     product_links.append("- Ürün bilgisi eksik (ID yok)")
-
-
                             st.markdown("\n".join(product_links), unsafe_allow_html=True)
-                            st.markdown("---") # Ayraç ekle
-                        # --- YENİ BÖLÜM SONU ---
-                            
-                        st.json(details_data) # Ham JSON verisini de göster
+                            st.markdown("---")
                         
+                        st.json(details_data)
                     except (json.JSONDecodeError, TypeError):
                         st.text(log_detail['details'])
         else:
