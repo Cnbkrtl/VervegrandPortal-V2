@@ -410,3 +410,146 @@ class ShopifyAPI:
             }
         except Exception as e:
             return {'success': False, 'message': f'GraphQL API failed: {e}'}
+        
+    def update_product_metafield(self, product_gid, namespace, key, value):
+        """
+        Bir ürünün belirli bir tamsayı (integer) metafield'ını günceller.
+        """
+        logging.info(f"Metafield güncelleniyor: Ürün GID: {product_gid}, {namespace}.{key} = {value}")
+        
+        mutation = """
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              metafield(namespace: $namespace, key: $key) {
+                value
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        variables = {
+          "input": {
+            "id": product_gid,
+            "metafields": [
+              {
+                "namespace": namespace,
+                "key": key,
+                "value": str(value),
+                "type": "number_integer"
+              }
+            ]
+          },
+          "namespace": namespace,
+          "key": key
+        }
+
+        try:
+            result = self.execute_graphql(mutation, variables)
+            if errors := result.get('productUpdate', {}).get('userErrors', []):
+                error_message = f"Metafield güncelleme hatası: {errors}"
+                logging.error(error_message)
+                return {'success': False, 'reason': error_message}
+            
+            updated_value = result.get('productUpdate', {}).get('product', {}).get('metafield', {}).get('value')
+            logging.info(f"✅ Metafield başarıyla güncellendi. Yeni değer: {updated_value}")
+            return {'success': True, 'new_value': updated_value}
+        
+        except Exception as e:
+            error_message = f"Metafield güncellenirken kritik hata: {e}"
+            logging.error(error_message)
+            return {'success': False, 'reason': str(e)}    
+        
+    def create_product_sortable_metafield_definition(self):
+        """
+        Sıralama ve filtreleme için gerekli tüm yeteneklere sahip olan
+        custom_sort.total_stock metafield tanımını API üzerinden oluşturur.
+        """
+        logging.info("API üzerinden sıralanabilir ürün metafield tanımı oluşturuluyor...")
+
+        mutation = """
+        mutation metafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
+          metafieldDefinitionCreate(definition: $definition) {
+            createdDefinition {
+              id
+              name
+              key
+              namespace
+              capabilities {
+                sortable
+                filterable
+              }
+            }
+            userErrors {
+              field
+              message
+              code
+            }
+          }
+        }
+        """
+
+        variables = {
+            "definition": {
+                "name": "Toplam Stok Siralamasi",
+                "namespace": "custom_sort",
+                "key": "total_stock",
+                "type": "number_integer",
+                "ownerType": "PRODUCT",
+                "capabilities": {
+                    "sortable": True,
+                    "filterable": True
+                }
+            }
+        }
+
+        try:
+            result = self.execute_graphql(mutation, variables)
+            errors = result.get('metafieldDefinitionCreate', {}).get('userErrors', [])
+            if errors:
+                if any(error.get('code') == 'TAKEN' for error in errors):
+                    return {'success': True, 'message': 'Metafield tanımı zaten mevcut. Silip tekrar denediniz mi?'}
+                return {'success': False, 'message': f"Metafield tanımı hatası: {errors}"}
+
+            created_definition = result.get('metafieldDefinitionCreate', {}).get('createdDefinition')
+            if created_definition:
+                return {'success': True, 'message': f"✅ Tanım başarıyla oluşturuldu: {created_definition.get('name')}"}
+            return {'success': False, 'message': 'Tanım oluşturuldu ancak sonuç alınamadı.'}
+
+        except Exception as e:
+            return {'success': False, 'message': f"Kritik API hatası: {e}"}    
+        
+    def get_collection_available_sort_keys(self, collection_gid):
+        """
+        Belirli bir koleksiyon için mevcut olan sıralama anahtarlarını
+        doğrudan API'den sorgular.
+        """
+        query = """
+        query collectionSortKeys($id: ID!) {
+          collection(id: $id) {
+            id
+            title
+            availableSortKeys {
+              key
+              title
+              urlParam
+            }
+          }
+        }
+        """
+        try:
+            result = self.execute_graphql(query, {"id": collection_gid})
+            collection_data = result.get('collection', {})
+            if not collection_data:
+                return {'success': False, 'message': 'Koleksiyon bulunamadı.'}
+            
+            sort_keys = collection_data.get('availableSortKeys', [])
+            return {'success': True, 'data': sort_keys}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}    
