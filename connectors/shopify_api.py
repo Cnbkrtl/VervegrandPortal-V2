@@ -8,14 +8,15 @@ from datetime import datetime, timedelta
 
 class ShopifyAPI:
     """Shopify Admin API ile iletişimi yöneten sınıf."""
-    def __init__(self, store_url, access_token):
+    def __init__(self, store_url, access_token, api_version='2024-10'): # api_version parametresi burada ekli olmalı
         if not store_url: raise ValueError("Shopify Mağaza URL'si boş olamaz.")
         if not access_token: raise ValueError("Shopify Erişim Token'ı boş olamaz.")
         
         self.store_url = store_url if store_url.startswith('http') else f"https://{store_url.strip()}"
         self.access_token = access_token
-        self.graphql_url = f"{self.store_url}/admin/api/2024-10/graphql.json"
-        self.rest_api_version = "2024-10"
+        self.api_version = api_version # Gelen versiyonu kullan
+        self.graphql_url = f"{self.store_url}/admin/api/{self.api_version}/graphql.json" # URL'yi dinamik hale getir
+        self.rest_api_version = self.api_version
         self.headers = {
             'X-Shopify-Access-Token': access_token,
             'Content-Type': 'application/json',
@@ -24,14 +25,12 @@ class ShopifyAPI:
         self.product_cache = {}
         self.location_id = None
         
-        # Rate limiting için
+        # Geri kalan kodlar aynı
         self.last_request_time = 0
-        self.min_request_interval = 0.4  # 400ms minimum bekleme
+        self.min_request_interval = 0.4
         self.request_count = 0
         self.window_start = time.time()
-        self.max_requests_per_minute = 40  # Dakikada max 20 istek
-
-        # Burst için ek ayarlar
+        self.max_requests_per_minute = 40
         self.burst_tokens = 10
         self.current_tokens = 10
 
@@ -410,6 +409,61 @@ class ShopifyAPI:
             }
         except Exception as e:
             return {'success': False, 'message': f'GraphQL API failed: {e}'}
+
+    def get_products_in_collection_with_inventory(self, collection_id):
+        """
+        Belirli bir koleksiyondaki tüm ürünleri, toplam stok bilgileriyle birlikte çeker.
+        Sayfalama yaparak tüm ürünlerin alınmasını sağlar.
+        """
+        all_products = []
+        query = """
+        query getCollectionProducts($id: ID!, $cursor: String) {
+          collection(id: $id) {
+            title
+            products(first: 50, after: $cursor) {
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+              edges {
+                node {
+                  id
+                  title
+                  handle
+                  totalInventory
+                  featuredImage {
+                    url(transform: {maxWidth: 100, maxHeight: 100})
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        variables = {"id": collection_id, "cursor": None}
+        
+        while True:
+            logging.info(f"Koleksiyon ürünleri çekiliyor... Cursor: {variables['cursor']}")
+            data = self.execute_graphql(query, variables)
+            
+            collection_data = data.get("collection")
+            if not collection_data:
+                logging.error(f"Koleksiyon {collection_id} bulunamadı veya veri alınamadı.")
+                break
+
+            products_data = collection_data.get("products", {})
+            for edge in products_data.get("edges", []):
+                all_products.append(edge["node"])
+            
+            page_info = products_data.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            
+            variables["cursor"] = page_info["endCursor"]
+            time.sleep(0.5) # Rate limit için küçük bir bekleme
+
+        logging.info(f"Koleksiyon için toplam {len(all_products)} ürün ve stok bilgisi çekildi.")
+        return all_products        
         
     def update_product_metafield(self, product_gid, namespace, key, value):
         """
@@ -417,8 +471,10 @@ class ShopifyAPI:
         """
         logging.info(f"Metafield güncelleniyor: Ürün GID: {product_gid}, {namespace}.{key} = {value}")
         
+        # Hatanın olduğu sorgu bu kısımdadır.
         mutation = """
-        mutation productUpdate($input: ProductInput!) {
+        # Değişkenler burada da tanımlanmalı: $namespace: String!, $key: String!
+        mutation productUpdate($input: ProductInput!, $namespace: String!, $key: String!) {
           productUpdate(input: $input) {
             product {
               id
@@ -464,14 +520,13 @@ class ShopifyAPI:
         except Exception as e:
             error_message = f"Metafield güncellenirken kritik hata: {e}"
             logging.error(error_message)
-            return {'success': False, 'reason': str(e)}    
+            return {'success': False, 'reason': str(e)}
         
-    def create_product_sortable_metafield_definition(self):
+    def create_product_sortable_metafield_definition(self, method='modern'):
         """
-        Sıralama ve filtreleme için gerekli tüm yeteneklere sahip olan
-        custom_sort.total_stock metafield tanımını API üzerinden oluşturur.
+        Metafield tanımını, seçilen metoda (modern, legacy, hybrid) göre oluşturur.
         """
-        logging.info("API üzerinden sıralanabilir ürün metafield tanımı oluşturuluyor...")
+        logging.info(f"API üzerinden metafield tanımı oluşturuluyor (Metot: {method}, API Versiyon: {self.api_version})...")
 
         mutation = """
         mutation metafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
@@ -479,12 +534,6 @@ class ShopifyAPI:
             createdDefinition {
               id
               name
-              key
-              namespace
-              capabilities {
-                sortable
-                filterable
-              }
             }
             userErrors {
               field
@@ -495,26 +544,32 @@ class ShopifyAPI:
         }
         """
 
-        variables = {
-            "definition": {
-                "name": "Toplam Stok Siralamasi",
-                "namespace": "custom_sort",
-                "key": "total_stock",
-                "type": "number_integer",
-                "ownerType": "PRODUCT",
-                "capabilities": {
-                    "sortable": True,
-                    "filterable": True
-                }
-            }
+        # Temel tanım
+        base_definition = {
+            "name": "Toplam Stok Siralamasi",
+            "namespace": "custom_sort",
+            "key": "total_stock",
+            "type": "number_integer",
+            "ownerType": "PRODUCT",
         }
+
+        # Seçilen metoda göre tanımı dinamik olarak oluştur
+        if method == 'modern':
+            base_definition["capabilities"] = {"sortable": True}
+        elif method == 'legacy':
+            base_definition["sortable"] = True
+        elif method == 'hybrid':
+            base_definition["capabilities"] = {"sortable": True}
+            base_definition["sortable"] = True
+        
+        variables = {"definition": base_definition}
 
         try:
             result = self.execute_graphql(mutation, variables)
             errors = result.get('metafieldDefinitionCreate', {}).get('userErrors', [])
             if errors:
                 if any(error.get('code') == 'TAKEN' for error in errors):
-                    return {'success': True, 'message': 'Metafield tanımı zaten mevcut. Silip tekrar denediniz mi?'}
+                    return {'success': True, 'message': 'Metafield tanımı zaten mevcut.'}
                 return {'success': False, 'message': f"Metafield tanımı hatası: {errors}"}
 
             created_definition = result.get('metafieldDefinitionCreate', {}).get('createdDefinition')
@@ -523,7 +578,7 @@ class ShopifyAPI:
             return {'success': False, 'message': 'Tanım oluşturuldu ancak sonuç alınamadı.'}
 
         except Exception as e:
-            return {'success': False, 'message': f"Kritik API hatası: {e}"}    
+            return {'success': False, 'message': f"Kritik API hatası: {e}"}
         
     def get_collection_available_sort_keys(self, collection_gid):
         """
