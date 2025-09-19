@@ -44,10 +44,11 @@ class SentosAPI:
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
-                # 500 (Sunucu hatası) ve 429 (Too Many Requests) hatalarında tekrar dene
+                # GÜNCELLEME: 500 (Sunucu hatası) ve 429 (Too Many Requests) hatalarında tekrar dene
                 if e.response.status_code in [500, 429] and attempt < self.max_retries - 1:
                     wait_time = self.base_delay * (2 ** attempt)  # Üstel geri çekilme
-                    logging.warning(f"Sentos API'den 500 veya 429 hatası alındı. {wait_time} saniye beklenip tekrar denenecek... (Deneme {attempt + 1}/{self.max_retries})")
+                    # GÜNCELLEME: Log mesajı daha açıklayıcı hale getirildi.
+                    logging.warning(f"Sentos API'den {e.response.status_code} hatası alındı. {wait_time} saniye beklenip tekrar denenecek... (Deneme {attempt + 1}/{self.max_retries})")
                     time.sleep(wait_time)
                 else:
                     # Diğer hatalarda veya son denemede istisnayı yükselt
