@@ -1,4 +1,4 @@
-# sync_runner.py (Alan Adı Hatası Düzeltilmiş Nihai Sürüm)
+# sync_runner.py (SKU Alanı Hatası Giderilmiş Kesin Çözüm)
 
 import logging
 import threading
@@ -55,15 +55,12 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
 
 def _create_product(shopify_api, sentos_api, sentos_product):
     """
-    Shopify'da yeni bir ürün oluşturur.
-    Mantık, 'shopify_sync - Kopya.py' dosyasındaki 'create_new_product' fonksiyonundan uyarlanmıştır.
-    'options' yerine doğru alan adı olan 'productOptions' kullanılarak düzeltilmiştir.
+    Shopify'da yeni bir ürün oluşturur. SKU alanı hatası giderilmiştir.
     """
     product_name = sentos_product.get('name', 'Bilinmeyen Ürün').strip()
     logging.info(f"Yeni ürün oluşturuluyor ('İki Adımlı Strateji' ile): {product_name}")
     changes = []
     try:
-        # ADIM 1: ÜRÜN İSKELETİNİ SEÇENEKLERLE OLUŞTUR
         sentos_variants = sentos_product.get('variants', []) or [sentos_product]
         
         has_color_option = any(get_variant_color(v) for v in sentos_variants)
@@ -77,8 +74,6 @@ def _create_product(shopify_api, sentos_api, sentos_product):
             "status": "DRAFT",
         }
 
-        # --- DÜZELTME BURADA YAPILDI ---
-        # 'options' yerine 'productOptions' kullanılıyor ve beklenen formatta veri gönderiliyor.
         product_options = []
         if has_color_option:
             colors = sorted(list(set(get_variant_color(v) for v in sentos_variants if get_variant_color(v))))
@@ -89,7 +84,6 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         if product_options:
             product_input["productOptions"] = product_options
-        # --- DÜZELTME SONU ---
 
         create_q = "mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id } userErrors { field message } } }"
         created_product_data = shopify_api.execute_graphql(create_q, {'input': product_input}).get('productCreate', {})
@@ -102,23 +96,26 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         changes.append(f"Ana ürün '{product_name}' DRAFT olarak oluşturuldu.")
         logging.info(f"Ürün iskeleti oluşturuldu (GID: {product_gid}).")
 
-        # ADIM 2: GERÇEK VARYANTLARI TOPLU OLARAK, OTOMATİK SİLME STRATEJİSİYLE EKLE
         variants_input = []
         for v in sentos_variants:
-            # DÜZELTME: Artık 'optionValues' kullanılmalı
             option_values = []
             if has_color_option:
                 option_values.append({"optionName": "Renk", "name": get_variant_color(v) or "Tek Renk"})
             if has_size_option:
                 option_values.append({"optionName": "Beden", "name": get_variant_size(v) or "Tek Beden"})
             
+            # --- KESİN ÇÖZÜM BURADA ---
+            # 'sku' alanı, olması gerektiği gibi 'inventoryItem' objesinin içine taşındı.
             variants_input.append({
                 "price": "0.00",
-                "sku": v.get('sku', ''),
                 "barcode": v.get('barcode'),
-                "optionValues": option_values, # 'options' yerine 'optionValues'
-                "inventoryItem": {"tracked": True}
+                "optionValues": option_values,
+                "inventoryItem": {
+                    "tracked": True,
+                    "sku": v.get('sku', '') # SKU ARTIK DOĞRU YERDE
+                }
             })
+            # --- ÇÖZÜM SONU ---
 
         bulk_q = """
         mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -140,7 +137,6 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         changes.append(f"{len(created_variants)} varyant eklendi.")
         logging.info(f"{len(created_variants)} varyant 'REMOVE_STANDALONE_VARIANT' stratejisi ile oluşturuldu.")
 
-        # SONRAKİ ADIMLAR (Değişiklik yok)
         if created_variants:
             stock_sync._activate_variants_at_location(shopify_api, created_variants)
             adjustments = stock_sync._prepare_inventory_adjustments(sentos_variants, created_variants)
