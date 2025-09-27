@@ -16,8 +16,8 @@ class SentosAPI:
         self.api_cookie = api_cookie
         self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
         # Yeniden deneme ayarları
-        self.max_retries = 3
-        self.base_delay = 5  # saniye cinsinden
+        self.max_retries = 5
+        self.base_delay = 15 # saniye cinsinden
 
     def _make_request(self, method, endpoint, auth_type='basic', data=None, params=None, is_internal_call=False):
         if is_internal_call:
@@ -40,7 +40,7 @@ class SentosAPI:
 
         for attempt in range(self.max_retries):
             try:
-                response = requests.request(method, url, headers=headers, auth=auth, data=data, params=params, timeout=30)
+                response = requests.request(method, url, headers=headers, auth=auth, data=data, params=params, timeout=90)
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
