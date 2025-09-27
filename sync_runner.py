@@ -1,4 +1,4 @@
-# sync_runner.py (SKU Alanı Hatası Giderilmiş Kesin Çözüm)
+# sync_runner.py (Fiyat ve Varyant Mantığı Düzeltilmiş Sürüm)
 
 import logging
 import threading
@@ -8,24 +8,18 @@ from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
 
-# Proje içindeki modülleri import et
 from connectors.shopify_api import ShopifyAPI
 from connectors.sentos_api import SentosAPI
 from operations import core_sync, media_sync, stock_sync
 from utils import get_apparel_sort_key, get_variant_color, get_variant_size
 
-# --- Loglama Konfigürasyonu ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-
-# --- İÇ MANTIK FONKSİYONLARI ---
-
 def _find_shopify_product(shopify_api, sentos_product):
-    """Sentos ürününü Shopify'da SKU veya başlığa göre arar."""
     if sku := sentos_product.get('sku', '').strip():
         if product := shopify_api.product_cache.get(f"sku:{sku}"): return product
     if name := sentos_product.get('name', '').strip():
@@ -33,7 +27,6 @@ def _find_shopify_product(shopify_api, sentos_product):
     return None
 
 def _update_product(shopify_api, sentos_api, sentos_product, existing_product, sync_mode):
-    """Mevcut bir ürünü belirtilen moda göre günceller."""
     product_name = sentos_product.get('name', 'Bilinmeyen Ürün') 
     shopify_gid = existing_product['gid']
     logging.info(f"Mevcut ürün güncelleniyor: '{product_name}' (GID: {shopify_gid}) | Mod: {sync_mode}")
@@ -42,10 +35,8 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
     if sync_mode in ["Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)", "Sadece Açıklamalar"]:
          all_changes.extend(core_sync.sync_details(shopify_api, shopify_gid, sentos_product))
          all_changes.extend(core_sync.sync_product_type(shopify_api, shopify_gid, sentos_product))
-
     if sync_mode in ["Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)", "Sadece Stok ve Varyantlar"]:
         all_changes.extend(stock_sync.sync_stock_and_variants(shopify_api, shopify_gid, sentos_product))
-
     if sync_mode in ["Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)", "Sadece Resimler", "SEO Alt Metinli Resimler"]:
         set_alt = sync_mode in ["Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)", "SEO Alt Metinli Resimler"]
         all_changes.extend(media_sync.sync_media(shopify_api, sentos_api, shopify_gid, sentos_product, set_alt_text=set_alt))
@@ -53,16 +44,34 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
     logging.info(f"✅ Ürün '{product_name}' başarıyla güncellendi.")
     return all_changes
 
+def _calculate_price(main_product):
+    """'shopify_sync' dosyasından alınan fiyat hesaplama mantığı."""
+    try:
+        # Öncelikli olarak prices->shopify->sale_price veya list_price deneniyor
+        if prices := main_product.get('prices', {}).get('shopify', {}):
+            for key in ['sale_price', 'list_price']:
+                if val_str := prices.get(key, '0'):
+                    price = float(str(val_str).replace(',', '.'))
+                    if price > 0: return f"{price:.2f}"
+        # Eğer yukarıdaki yapı yoksa, ana üründeki sale_price deneniyor
+        if main_price_str := main_product.get('sale_price', '0'):
+             price = float(str(main_price_str).replace(',', '.'))
+             return f"{price:.2f}"
+    except (ValueError, TypeError, AttributeError):
+        pass # Hata durumunda varsayılan fiyata düş
+    return "0.00"
+
+
 def _create_product(shopify_api, sentos_api, sentos_product):
-    """
-    Shopify'da yeni bir ürün oluşturur. SKU alanı hatası giderilmiştir.
-    """
     product_name = sentos_product.get('name', 'Bilinmeyen Ürün').strip()
     logging.info(f"Yeni ürün oluşturuluyor ('İki Adımlı Strateji' ile): {product_name}")
     changes = []
     try:
         sentos_variants = sentos_product.get('variants', []) or [sentos_product]
         
+        # Ana üründen fiyatı hesapla
+        product_price = _calculate_price(sentos_product)
+
         has_color_option = any(get_variant_color(v) for v in sentos_variants)
         has_size_option = any(get_variant_size(v) for v in sentos_variants)
         
@@ -81,7 +90,6 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         if has_size_option:
             sizes = sorted(list(set(get_variant_size(v) for v in sentos_variants if get_variant_size(v))), key=get_apparel_sort_key)
             product_options.append({"name": "Beden", "values": [{"name": s} for s in sizes]})
-        
         if product_options:
             product_input["productOptions"] = product_options
 
@@ -104,18 +112,15 @@ def _create_product(shopify_api, sentos_api, sentos_product):
             if has_size_option:
                 option_values.append({"optionName": "Beden", "name": get_variant_size(v) or "Tek Beden"})
             
-            # --- KESİN ÇÖZÜM BURADA ---
-            # 'sku' alanı, olması gerektiği gibi 'inventoryItem' objesinin içine taşındı.
             variants_input.append({
-                "price": "0.00",
+                "price": product_price,  # DÜZELTME: Fiyat artık dinamik olarak atanıyor.
                 "barcode": v.get('barcode'),
                 "optionValues": option_values,
                 "inventoryItem": {
                     "tracked": True,
-                    "sku": v.get('sku', '') # SKU ARTIK DOĞRU YERDE
+                    "sku": v.get('sku', '')
                 }
             })
-            # --- ÇÖZÜM SONU ---
 
         bulk_q = """
         mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -146,10 +151,15 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         changes.extend(media_sync.sync_media(shopify_api, sentos_api, product_gid, sentos_product, set_alt_text=True))
         
-        activate_q = "mutation productUpdate($input: ProductUpdateInput!) { productUpdate(input: $input) { product { id } userErrors { field message } } }"
-        shopify_api.execute_graphql(activate_q, {"input": {"id": product_gid, "status": "ACTIVE"}})
-        changes.append("Ürün durumu 'Aktif' olarak ayarlandı.")
-        logging.info(f"Ürün '{product_name}' başarıyla oluşturuldu ve aktive edildi.")
+        activate_q = "mutation productUpdate($input: ProductUpdateInput!) { productUpdate(input: $input) { product { id status } userErrors { field message } } }"
+        activate_result = shopify_api.execute_graphql(activate_q, {"input": {"id": product_gid, "status": "ACTIVE"}})
+
+        if activate_result.get('productUpdate', {}).get('userErrors', []):
+             logging.warning(f"Ürün aktive edilirken hata oluştu: {activate_result['productUpdate']['userErrors']}")
+             changes.append("Ürün aktive edilemedi, taslak olarak kaldı.")
+        else:
+            changes.append("Ürün durumu 'Aktif' olarak ayarlandı.")
+            logging.info(f"Ürün '{product_name}' başarıyla oluşturuldu ve aktive edildi.")
 
         return changes
 
@@ -247,8 +257,6 @@ def _run_core_sync_logic(shopify_config, sentos_config, sync_mode, max_workers, 
     except Exception as e:
         logging.critical(f"Senkronizasyon görevi kritik bir hata oluştu: {e}\n{traceback.format_exc()}")
         progress_callback({'status': 'error', 'message': str(e)})
-
-# --- ARAYÜZ (UI) İÇİN DIŞARIYA AÇIK FONKSİYONLAR ---
 
 def sync_products_from_sentos_api(store_url, access_token, sentos_api_url, sentos_api_key, sentos_api_secret, sentos_cookie, test_mode, progress_callback, stop_event, max_workers=2, sync_mode="Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)"):
     shopify_config = {'store_url': store_url, 'access_token': access_token}
