@@ -1,4 +1,4 @@
-# sync_runner.py (Kullanıcı Mantığına Göre Düzeltilmiş Nihai Sürüm)
+# sync_runner.py (Orijinal Mantık Temel Alınarak Düzeltilmiş ve Güçlendirilmiş Nihai Sürüm)
 
 import sys
 import os
@@ -40,7 +40,6 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
     shopify_gid = existing_product['gid']
     logging.info(f"Mevcut ürün güncelleniyor: '{product_name}' (GID: {shopify_gid}) | Mod: {sync_mode}")
     all_changes = []
-    
     patch_shopify_api(shopify_api)
     
     if sync_mode in ["Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)", "Sadece Açıklamalar"]:
@@ -59,99 +58,90 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
 
 def _create_product(shopify_api, sentos_api, sentos_product):
     """
-    Kullanıcının sağladığı adımlı mantığa dayalı, sağlam ve hatasız ürün oluşturma fonksiyonu.
+    Orijinal kod mantığını temel alan, veri tutarsızlıklarına karşı güçlendirilmiş,
+    adımlı ve sağlam ürün oluşturma fonksiyonu.
     """
-    product_name = sentos_product.get('name', 'Bilinmeyen Ürün')
-    logging.info(f"=== YENİ ÜRÜN OLUŞTURULUYOR (SAĞLAM METOT): {product_name} ===")
+    product_name = sentos_product.get('name', 'Bilinmeyen Ürün').strip()
+    logging.info(f"=== YENİ ÜRÜN OLUŞTURULUYOR (GÜÇLENDİRİLMİŞ METOT): {product_name} ===")
     changes = []
     patch_shopify_api(shopify_api)
 
     try:
-        sentos_variants = sentos_product.get('variants', [])
-        if not sentos_variants:
-            sentos_variants = [sentos_product]
+        sentos_variants = sentos_product.get('variants', []) or [sentos_product]
 
-        # ADIM 1: SEÇENEKLERİ (RENK, BEDEN) TOPLA
-        color_set = {get_variant_color(v) for v in sentos_variants if get_variant_color(v)}
-        size_set = {get_variant_size(v) for v in sentos_variants if get_variant_size(v)}
-        
-        # ADIM 2: ÜRÜN İSKELETİNİ SEÇENEKLERLE BİRLİKTE OLUŞTUR
+        # ADIM 1: ÖN ANALİZ - ÜRÜNÜN GENEL SEÇENEKLERİNİ BELİRLE
+        has_color_option = any(get_variant_color(v) for v in sentos_variants)
+        has_size_option = any(get_variant_size(v) for v in sentos_variants)
+
+        # ADIM 2: ÜRÜN İSKELETİNİ DOĞRU SEÇENEKLERLE OLUŞTUR
         product_input = {
-            "title": product_name.strip(),
+            "title": product_name,
             "vendor": sentos_product.get('vendor', 'Vervegrand'),
             "productType": str(sentos_product.get('category', '')),
             "descriptionHtml": sentos_product.get('description_detail') or sentos_product.get('description', ''),
             "status": "DRAFT",
         }
         
-        options = []
-        if color_set: options.append("Renk")
-        if size_set: options.append("Beden")
-        if options: product_input["options"] = options
+        product_options_names = []
+        if has_color_option: product_options_names.append("Renk")
+        if has_size_option: product_options_names.append("Beden")
+        if product_options_names: product_input["options"] = product_options_names
 
         create_mutation = """
         mutation productCreate($input: ProductInput!) {
           productCreate(input: $input) {
-            product {
-              id
-              variants(first: 1) { nodes { id } }
-            }
-            userErrors { field message }
+            product { id, variants(first: 1) { nodes { id } } }
+            userErrors { field, message }
           }
         }
         """
-        result = shopify_api.execute_graphql(create_mutation, {"input": product_input})
+        create_result = shopify_api.execute_graphql(create_mutation, {"input": product_input})
 
-        if errors := result.get('productCreate', {}).get('userErrors', []):
+        if errors := create_result.get('productCreate', {}).get('userErrors', []):
             raise Exception(f"Ürün iskeleti oluşturma hatası: {json.dumps(errors)}")
 
-        product_data = result['productCreate']['product']
+        product_data = create_result['productCreate']['product']
         product_gid = product_data['id']
         logging.info(f"✅ Ürün iskeleti DRAFT olarak oluşturuldu: {product_gid}")
         changes.append(f"Ana ürün '{product_name}' oluşturuldu.")
 
-        # ADIM 3: SHOPIFY'IN OTOMATİK OLUŞTURDUĞU VARSAYILAN VARYANTI SİL
-        default_variant = product_data.get('variants', {}).get('nodes', [{}])[0]
-        if default_variant_id := default_variant.get('id'):
-            delete_mutation = """
-            mutation productVariantDelete($id: ID!) {
-                productVariantDelete(id: $id) {
-                    deletedProductVariantId userErrors { field message }
-                }
-            }
-            """
+        # ADIM 3: VARSAYILAN VARYANTI SİL
+        default_variant_id = product_data.get('variants', {}).get('nodes', [{}])[0].get('id')
+        if default_variant_id:
+            delete_mutation = "mutation productVariantDelete($id: ID!) { productVariantDelete(id: $id) { deletedProductVariantId, userErrors { field, message } } }"
             shopify_api.execute_graphql(delete_mutation, {"id": default_variant_id})
-            logging.info(f"Varsayılan varyant ({default_variant_id}) silindi.")
+            logging.info(f"Varsayılan Shopify varyantı ({default_variant_id}) silindi.")
 
-        # ADIM 4: GERÇEK VARYANTLARI TOPLU OLARAK OLUŞTUR
+        # ADIM 4: GERÇEK VARYANTLARI TUTARLI VERİ İLE OLUŞTUR
         variants_to_create = []
         for v in sentos_variants:
-            variant_options = []
-            if color := get_variant_color(v): variant_options.append(color)
-            if size := get_variant_size(v): variant_options.append(size)
-
+            variant_options_values = []
+            if has_color_option:
+                variant_options_values.append(get_variant_color(v) or "Tek Renk") # Renk yoksa varsayılan ata
+            if has_size_option:
+                variant_options_values.append(get_variant_size(v) or "Tek Beden") # Beden yoksa varsayılan ata
+            
             variants_to_create.append({
                 "price": str(v.get('price', "0.00")),
                 "sku": v.get('sku', ''),
                 "barcode": v.get('barcode'),
-                "options": variant_options,
+                "options": variant_options_values,
                 "inventoryItem": {"tracked": True}
             })
 
         if variants_to_create:
-            bulk_mutation = """
+            bulk_create_mutation = """
             mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                productVariantsBulkCreate(productId: $productId, variants: $variants) {
-                    productVariants { id sku inventoryItem { id } }
-                    userErrors { field message }
-                }
+              productVariantsBulkCreate(productId: $productId, variants: $variants) {
+                productVariants { id, sku, inventoryItem { id } }
+                userErrors { field, message }
+              }
             }
             """
-            bulk_result = shopify_api.execute_graphql(bulk_mutation, {
-                "productId": product_gid, "variants": variants_to_create
-            })
+            bulk_result = shopify_api.execute_graphql(bulk_create_mutation, {"productId": product_gid, "variants": variants_to_create})
+            
             if bulk_errors := bulk_result.get('productVariantsBulkCreate', {}).get('userErrors', []):
-                raise Exception(f"Varyant oluşturma hatası: {json.dumps(bulk_errors)}")
+                raise Exception(f"Varyantları toplu oluşturma hatası: {json.dumps(bulk_errors)}")
             
             created_variants = bulk_result['productVariantsBulkCreate']['productVariants']
             logging.info(f"✅ {len(created_variants)} adet gerçek varyant oluşturuldu.")
@@ -162,45 +152,33 @@ def _create_product(shopify_api, sentos_api, sentos_product):
             
             inventory_adjustments = []
             sku_to_inventory_id = {cv['sku']: cv['inventoryItem']['id'] for cv in created_variants if cv.get('sku')}
-            
             for v_data in sentos_variants:
                 sku = v_data.get('sku', '')
                 if inventory_item_id := sku_to_inventory_id.get(sku):
                     quantity = sum(s.get('stock', 0) for s in v_data.get('stocks', []) if isinstance(s, dict))
-                    inventory_adjustments.append({
-                        "inventoryItemId": inventory_item_id,
-                        "availableQuantity": int(quantity)
-                    })
+                    inventory_adjustments.append({"inventoryItemId": inventory_item_id, "availableQuantity": int(quantity)})
             
             if inventory_adjustments:
                 stock_sync._adjust_inventory_bulk(shopify_api, inventory_adjustments)
                 logging.info(f"✅ {len(inventory_adjustments)} varyantın stoğu ayarlandı.")
                 changes.append(f"{len(inventory_adjustments)} varyant stoğu güncellendi.")
 
-        # ADIM 6: MEDYAYI EKLE
-        time.sleep(2) # Varyantların işlenmesi için bekle
+        # ADIM 6: MEDYAYI SENKRONİZE ET
+        time.sleep(2)
         if sentos_product.get('id'):
             media_changes = media_sync.sync_media(shopify_api, sentos_api, product_gid, sentos_product, set_alt_text=True)
             changes.extend(media_changes)
 
-        # ADIM 7: ÜRÜNÜ AKTİF YAP
-        activate_mutation = """
-        mutation productUpdate($input: ProductUpdateInput!) {
-            productUpdate(input: $input) {
-                product { id status }
-                userErrors { field message }
-            }
-        }
-        """
-        activate_result = shopify_api.execute_graphql(activate_mutation, {"input": {"id": product_gid, "status": "ACTIVE"}})
-        if not activate_result.get('productUpdate', {}).get('userErrors', []):
-            logging.info("✅ Ürün başarıyla AKTİF duruma getirildi.")
-            changes.append("Ürün 'Aktif' olarak ayarlandı.")
+        # ADIM 7: ÜRÜNÜ AKTİF OLARAK GÜNCELLE
+        activate_mutation = "mutation productUpdate($input: ProductUpdateInput!) { productUpdate(input: $input) { product { id, status }, userErrors { field, message } } }"
+        shopify_api.execute_graphql(activate_mutation, {"input": {"id": product_gid, "status": "ACTIVE"}})
+        logging.info("✅ Ürün başarıyla AKTİF duruma getirildi.")
+        changes.append("Ürün 'Aktif' olarak ayarlandı.")
         
         return changes
 
     except Exception as e:
-        error_msg = f"HATA: '{product_name}' oluşturulurken kritik hata: {e}"
+        error_msg = f"HATA: '{product_name}' oluşturulamadı. Sebep: {e}"
         logging.error(error_msg)
         traceback.print_exc()
         return [f"Kritik Hata: {e}"]
@@ -323,9 +301,8 @@ def _run_core_sync_logic(shopify_config, sentos_config, sync_mode, max_workers, 
         progress_callback({'status': 'done', 'results': results})
 
     except Exception as e:
-        logging.critical(f"10-Worker sync kritik hatası: {e}\n{traceback.format_exc()}")
+        logging.critical(f"Ana senkronizasyon döngüsünde kritik hata: {e}\n{traceback.format_exc()}")
         progress_callback({'status': 'error', 'message': str(e)})
-
 
 def sync_products_from_sentos_api(store_url, access_token, sentos_api_url, sentos_api_key, sentos_api_secret, sentos_cookie, test_mode, progress_callback, stop_event, max_workers=8, sync_mode="Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)"):
     shopify_config = {'store_url': store_url, 'access_token': access_token}
@@ -341,7 +318,6 @@ def sync_single_product_by_sku(store_url, access_token, sentos_api_url, sentos_a
     try:
         shopify_api = ShopifyAPI(store_url, access_token)
         sentos_api = SentosAPI(sentos_api_url, sentos_api_key, sentos_api_secret, sentos_cookie)
-        
         patch_shopify_api(shopify_api)
         
         sentos_product = sentos_api.get_product_by_sku(sku)
@@ -354,7 +330,7 @@ def sync_single_product_by_sku(store_url, access_token, sentos_api_url, sentos_a
         if not existing_product:
             logging.info(f"Shopify'da ürün bulunamadı, '{sku}' SKU'lu ürün oluşturulacak.")
             changes_made = _create_product(shopify_api, sentos_api, sentos_product)
-            if changes_made and "Hata" in changes_made[0]:
+            if changes_made and "Kritik Hata" in changes_made[0]:
                  raise Exception(changes_made[0])
             product_name = sentos_product.get('name', sku)
             return {'success': True, 'product_name': product_name, 'changes': changes_made}
