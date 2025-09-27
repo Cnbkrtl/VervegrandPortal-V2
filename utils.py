@@ -12,9 +12,31 @@ def get_apparel_sort_key(size_str):
     if numbers: return (2, int(numbers[0]), size_str)
     return (3, 9999, size_str)
 
-def get_variant_size(variant):
-    model = variant.get('model', "")
-    return (model.get('value', "") if isinstance(model, dict) else str(model)).strip() or None
+def get_variant_size(variant_data):
+    """Varyant verisinden beden bilgisini alır. Sadece 'model' nesnesini kontrol eder."""
+    if not isinstance(variant_data, dict):
+        return None
+    
+    model = variant_data.get('model')
+    if isinstance(model, dict) and model.get('name', '').lower() == 'beden':
+        value = model.get('value')
+        return str(value).strip() if value is not None else None
+        
+    return None
 
-def get_variant_color(variant):
-    return (variant.get('color') or "").strip() or None
+def get_variant_color(variant_data):
+    """Varyant verisinden renk bilgisini alır. Hem 'color' anahtarını hem de 'model' nesnesini kontrol eder."""
+    if not isinstance(variant_data, dict):
+        return None
+
+    # 1. Öncelikli olarak doğrudan 'color' anahtarını kontrol et
+    if color := variant_data.get('color'):
+        return str(color).strip()
+
+    # 2. 'color' anahtarı yoksa 'model' nesnesini kontrol et
+    if model := variant_data.get('model'):
+        if isinstance(model, dict) and model.get('name', '').lower() == 'renk':
+            value = model.get('value')
+            return str(value).strip() if value is not None else None
+            
+    return None
