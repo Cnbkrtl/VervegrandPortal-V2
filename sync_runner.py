@@ -128,8 +128,8 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         # productCreate mutation'ı - 2024-10 formatı
         create_mutation = """
-        mutation productCreate($product: ProductCreateInput!) {
-            productCreate(product: $product) {
+        mutation productCreate($input: ProductCreateInput!) {
+            productCreate(input: $input) {
                 product { 
                     id 
                     title
