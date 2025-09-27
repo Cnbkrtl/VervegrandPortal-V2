@@ -57,21 +57,98 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
     logging.info(f"✅ Ürün '{product_name}' başarıyla güncellendi.")
     return all_changes
 
+def _fix_inventory_tracking(shopify_api, product_gid):
+    """Oluşturulan ürünün inventory tracking'ini düzelt"""
+    try:
+        # Ürünün variant'larını al
+        variants_query = """
+        query getProductVariants($id: ID!) {
+            product(id: $id) {
+                variants(first: 100) {
+                    edges {
+                        node {
+                            id
+                            inventoryItem { id }
+                        }
+                    }
+                }
+            }
+        }
+        """
+        
+        result = shopify_api.execute_graphql(variants_query, {"id": product_gid})
+        variants = result.get('product', {}).get('variants', {}).get('edges', [])
+        
+        # Her variant için inventory tracking'i aktive et
+        for variant_edge in variants:
+            variant = variant_edge.get('node', {})
+            inventory_item_id = variant.get('inventoryItem', {}).get('id')
+            
+            if inventory_item_id:
+                # Inventory Item'ı güncelle
+                update_mutation = """
+                mutation inventoryItemUpdate($id: ID!, $input: InventoryItemUpdateInput!) {
+                    inventoryItemUpdate(id: $id, input: $input) {
+                        inventoryItem { id tracked }
+                        userErrors { field message }
+                    }
+                }
+                """
+                
+                shopify_api.execute_graphql(update_mutation, {
+                    "id": inventory_item_id,
+                    "input": {"tracked": True}
+                })
+                
+                logging.info(f"Inventory tracking aktive edildi: {inventory_item_id}")
+                
+        # Location'da inventory level'larını ayarla
+        location_id = shopify_api.get_default_location_id()
+        
+        for variant_edge in variants:
+            variant = variant_edge.get('node', {})
+            inventory_item_id = variant.get('inventoryItem', {}).get('id')
+            
+            if inventory_item_id:
+                # Inventory level'ını set et
+                set_mutation = """
+                mutation inventorySetOnHandQuantities($input: InventorySetOnHandQuantitiesInput!) {
+                    inventorySetOnHandQuantities(input: $input) {
+                        inventoryAdjustmentGroup { id }
+                        userErrors { field message }
+                    }
+                }
+                """
+                
+                shopify_api.execute_graphql(set_mutation, {
+                    "input": {
+                        "reason": "correction",
+                        "setQuantities": [{
+                            "inventoryItemId": inventory_item_id,
+                            "locationId": location_id,
+                            "quantity": 0  # Başlangıç stok
+                        }]
+                    }
+                })
+        
+        logging.info("Inventory tracking ve levels düzeltildi")
+        
+    except Exception as e:
+        logging.error(f"Inventory tracking düzeltme hatası: {e}")
+
 def _create_product(shopify_api, sentos_api, sentos_product):
-    """Shopify'da yeni bir ürün oluşturur - 10-worker optimizeli"""
+    """Stock sync mantığını kullanarak ürün oluştur"""
     product_name = sentos_product.get('name', 'Bilinmeyen Ürün')
-    logging.info(f"Yeni ürün oluşturuluyor: {product_name}")
+    logging.info(f"Yeni ürün oluşturuluyor (Stock sync mantığı): {product_name}")
     
     changes = []
-    
-    # Media sync için ShopifyAPI'yi patch et
     patch_shopify_api(shopify_api)
 
     try:
-        # 1. Ana ürünü oluştur
+        # Adım 1: Basit ürün oluştur (stock sync'in yaptığı gibi)
         product_input = {
             "title": product_name,
-            "vendor": sentos_product.get('vendor', ''),
+            "vendor": sentos_product.get('vendor', 'Vervegrand'),
             "productType": str(sentos_product.get('category', '')),
             "descriptionHtml": sentos_product.get('description_detail') or sentos_product.get('description', ''),
             "status": "DRAFT"
@@ -80,14 +157,8 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         create_mutation = """
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
-                product {
-                    id
-                    title
-                }
-                userErrors {
-                    field
-                    message
-                }
+                product { id title }
+                userErrors { field, message }
             }
         }
         """
@@ -96,75 +167,43 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         if errors := result.get('productCreate', {}).get('userErrors', []):
             raise Exception(f"Ürün oluşturma hatası: {errors}")
-        
+            
         product = result.get('productCreate', {}).get('product', {})
         product_gid = product.get('id')
         
         if not product_gid:
-            raise Exception("Ürün oluşturuldu ancak ID alınamadı")
+            raise Exception("Ürün oluşturuldu ancak ID alınamadı.")
         
-        changes.append(f"✅ Ana ürün '{product_name}' oluşturuldu")
+        changes.append(f"✅ Ana ürün '{product_name}' oluşturuldu.")
         
-        # 2. Varyantları bulk olarak ekle
+        # Adım 2: Stock sync'in exact metodunu kullan
         variants = sentos_product.get('variants', [])
         if variants:
-            variants_input = []
-            for v in variants:
-                variant_input = {
-                    "price": "0.00",
-                    "inventoryItem": {
-                        "tracked": True,
-                        "sku": v.get('sku', '')
-                    }
-                }
-                
-                if barcode := v.get('barcode'):
-                    variant_input['barcode'] = barcode
-                
-                options = []
-                if color := get_variant_color(v):
-                    options.append(color)
-                if size := get_variant_size(v):
-                    options.append(size)
-                
-                if options:
-                    variant_input['options'] = options
-                
-                variants_input.append(variant_input)
-            
-            # Bulk varyant oluşturma - 2024-10 API
-            bulk_variant_mutation = """
-            mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                productVariantsBulkCreate(productId: $productId, variants: $variants) {
-                    productVariants {
-                        id
-                        sku
-                    }
-                    userErrors {
-                        field
-                        message
-                    }
-                }
-            }
-            """
-            
-            variant_result = shopify_api.execute_graphql(bulk_variant_mutation, {
-                "productId": product_gid,
-                "variants": variants_input
-            })
-            
-            if variant_errors := variant_result.get('productVariantsBulkCreate', {}).get('userErrors', []):
-                logging.warning(f"Varyant oluşturma hataları: {variant_errors}")
-            else:
-                created_variants = variant_result.get('productVariantsBulkCreate', {}).get('productVariants', [])
-                changes.append(f"✅ {len(created_variants)} varyant bulk olarak eklendi")
+            # Stock sync fonksiyonunu doğrudan çağır
+            from operations.stock_sync import sync_stock_and_variants
+            stock_changes = sync_stock_and_variants(shopify_api, product_gid, sentos_product)
+            changes.extend(stock_changes)
         
-        # 3. Ürünü aktif hale getir
+        # Adım 3: Medya sync
+        if sentos_product.get('id'):
+            try:
+                media_changes = media_sync.sync_media(shopify_api, sentos_api, product_gid, sentos_product, set_alt_text=True)
+                changes.extend(media_changes)
+            except Exception as e:
+                logging.error(f"Medya sync hatası: {e}")
+                changes.append(f"⚠️ Medya sync hatası: {e}")
+        
+        # Adım 4: Inventory tracking düzelt
+        if product_gid:
+            _fix_inventory_tracking(shopify_api, product_gid)
+            changes.append("Inventory tracking düzeltildi")
+        
+        # Adım 5: Ürünü aktif hale getir
         activate_mutation = """
         mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
-                product { id }
-                userErrors { field message }
+                product { id status }
+                userErrors { field, message }
             }
         }
         """
@@ -172,23 +211,15 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         shopify_api.execute_graphql(activate_mutation, {
             "input": {"id": product_gid, "status": "ACTIVE"}
         })
+        changes.append("✅ Ürün aktif hale getirildi.")
         
-        changes.append("✅ Ürün aktif duruma getirildi")
-        
-        # 4. Medya ve stok senkronizasyonu
-        if sentos_product.get('id'):
-            media_changes = media_sync.sync_media(shopify_api, sentos_api, product_gid, sentos_product, set_alt_text=True)
-            changes.extend(media_changes)
-            
-            stock_changes = stock_sync.sync_stock_and_variants(shopify_api, product_gid, sentos_product)
-            changes.extend(stock_changes)
-        
-        logging.info(f"✅ Yeni ürün '{product_name}' başarıyla oluşturuldu ve senkronize edildi")
+        logging.info(f"✅ Yeni ürün '{product_name}' başarıyla oluşturuldu.")
         return changes
         
     except Exception as e:
-        error_msg = f"Ürün oluşturma hatası: {e}"
+        error_msg = f"'{product_name}' oluşturulurken kritik hata: {e}"
         logging.error(error_msg)
+        traceback.print_exc()
         return [f"❌ {error_msg}"]
 
 def _process_single_product(shopify_api, sentos_api, sentos_product, sync_mode, progress_callback, stats, details, lock):
