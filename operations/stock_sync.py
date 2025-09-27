@@ -178,7 +178,19 @@ def _add_variants_bulk(shopify_api, product_gid, new_variants, main_product):
                 options.append(size)
                 
             if options:
-                variant_input['options'] = options
+                # Product options'larını al
+                product_options = _get_product_options(shopify_api, product_gid)
+                option_values = []
+    
+                for i, option_value in enumerate(options):
+                    if i < len(product_options):
+                        option_values.append({
+                            "optionId": product_options[i].get('id'),
+                            "name": option_value
+                        })
+    
+                if option_values:
+                    variant_input['optionValues'] = option_values
                 
             variants_input.append(variant_input)
 
@@ -225,6 +237,22 @@ def _add_variants_bulk(shopify_api, product_gid, new_variants, main_product):
                 
         except Exception as e:
             logging.error(f"Bulk varyant batch {batch_start//batch_size + 1} ekleme hatası: {e}")
+
+def _get_product_options(shopify_api, product_gid):
+    """Product'ın options'larını al"""
+    query = """
+    query getProductOptions($id: ID!) {
+        product(id: $id) {
+            options { id name }
+        }
+    }
+    """
+    try:
+        result = shopify_api.execute_graphql(query, {"id": product_gid})
+        return result.get('product', {}).get('options', [])
+    except Exception as e:
+        logging.error(f"Product options alınamadı: {e}")
+        return []            
 
 def _activate_variants_at_location(shopify_api, variants):
     """10-worker için optimize edilmiş inventory aktivasyonu"""
