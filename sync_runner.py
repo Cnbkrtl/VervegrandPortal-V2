@@ -66,13 +66,27 @@ def _create_product(shopify_api, sentos_api, sentos_product):
     patch_shopify_api(shopify_api)
 
     try:
-        # AŞAMA 1: Sadece ürün oluştur (varyant/option yok)
+        # Varyantlardan options'ları çıkar
+        variants = sentos_product.get('variants', [])
+        product_options = []
+        
+        if variants:
+            color_values = {get_variant_color(v) for v in variants if get_variant_color(v)}
+            size_values = {get_variant_size(v) for v in variants if get_variant_size(v)}
+            
+            if color_values:
+                product_options.append("Renk")
+            if size_values:
+                product_options.append("Beden")
+
+        # Ürünü OPTIONS ile oluştur
         product_input = {
             "title": product_name,
             "vendor": sentos_product.get('vendor', 'Vervegrand'),
             "productType": str(sentos_product.get('category', '')),
             "descriptionHtml": sentos_product.get('description_detail') or sentos_product.get('description', ''),
-            "status": "DRAFT"
+            "status": "DRAFT",
+            "productOptions": product_options  # Bu kritik!
         }
         
         create_mutation = """
