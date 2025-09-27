@@ -58,9 +58,9 @@ def _update_product(shopify_api, sentos_api, sentos_product, existing_product, s
     return all_changes
 
 def _create_product(shopify_api, sentos_api, sentos_product):
-    """Shopify'ın önerdiği 3 aşamalı yöntem"""
+    """Debug logları eklenmiş ürün oluşturma fonksiyonu"""
     product_name = sentos_product.get('name', 'Bilinmeyen Ürün')
-    logging.info(f"Yeni ürün oluşturuluyor (3 Aşamalı): {product_name}")
+    logging.info(f"=== CREATING PRODUCT: {product_name} ===")
     
     changes = []
     patch_shopify_api(shopify_api)
@@ -78,6 +78,9 @@ def _create_product(shopify_api, sentos_api, sentos_product):
                 product_options.append("Renk")
             if size_values:
                 product_options.append("Beden")
+        
+        logging.info(f"DEBUG - Product options to create: {product_options}")
+        logging.info(f"DEBUG - Variant count: {len(variants)}")
 
         # Ürünü OPTIONS ile oluştur
         product_input = {
@@ -86,13 +89,20 @@ def _create_product(shopify_api, sentos_api, sentos_product):
             "productType": str(sentos_product.get('category', '')),
             "descriptionHtml": sentos_product.get('description_detail') or sentos_product.get('description', ''),
             "status": "DRAFT",
-            "productOptions": product_options  # Bu kritik!
+            "productOptions": product_options if product_options else None
         }
+        
+        logging.info(f"DEBUG - Product input: {product_input}")
         
         create_mutation = """
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
-                product { id title }
+                product { 
+                    id 
+                    title
+                    status
+                    options { id name }
+                }
                 userErrors { field, message }
             }
         }
@@ -100,37 +110,71 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         result = shopify_api.execute_graphql(create_mutation, {"input": product_input})
         
+        # CRITICAL DEBUG - RAW RESPONSE
+        logging.info(f"DEBUG - RAW API RESPONSE: {result}")
+        
         if errors := result.get('productCreate', {}).get('userErrors', []):
+            logging.error(f"DEBUG - USER ERRORS: {errors}")
             raise Exception(f"Ürün oluşturma hatası: {errors}")
             
         product = result.get('productCreate', {}).get('product', {})
         product_gid = product.get('id')
         
+        logging.info(f"DEBUG - RETURNED PRODUCT GID: {product_gid}")
+        
         if not product_gid:
+            logging.error("DEBUG - Product GID is None!")
             raise Exception("Ürün oluşturuldu ancak ID alınamadı.")
         
-        changes.append(f"✅ Ana ürün '{product_name}' oluşturuldu.")
+        changes.append(f"Ana ürün '{product_name}' oluşturuldu (GID: {product_gid})")
         
-        # AŞAMA 2: Stock sync ile varyantları ekle (çalışan yöntem)
-        variants = sentos_product.get('variants', [])
+        # VERIFICATION - Gerçekten var mı?
+        verify_query = """
+        query verifyProduct($id: ID!) {
+            product(id: $id) {
+                id
+                title
+                status
+                createdAt
+                options { id name }
+            }
+        }
+        """
+        
+        verify_result = shopify_api.execute_graphql(verify_query, {"id": product_gid})
+        verify_product = verify_result.get('product')
+        
+        if verify_product:
+            logging.info(f"DEBUG - VERIFICATION SUCCESS: {verify_product}")
+            changes.append(f"Ürün doğrulandı: Status={verify_product.get('status')}")
+        else:
+            logging.error(f"DEBUG - VERIFICATION FAILED: Product {product_gid} does not exist!")
+            raise Exception("Ürün oluşturuldu ama doğrulanamadı - PHANTOM CREATE!")
+        
+        # Stock sync ile varyantları ekle (eğer varsa)
         if variants:
-            # Stock sync fonksiyonunu çağır - bu çalışıyor
+            logging.info(f"DEBUG - Starting stock sync for {len(variants)} variants")
             stock_changes = stock_sync.sync_stock_and_variants(shopify_api, product_gid, sentos_product)
             changes.extend(stock_changes)
             
-            # 5 saniye bekle - varyantların işlenmesi için
-            time.sleep(5)
+            # Varyant ekleme sonrası kontrol
+            time.sleep(3)
+            final_verify = shopify_api.execute_graphql(verify_query, {"id": product_gid})
+            final_product = final_verify.get('product', {})
+            logging.info(f"DEBUG - AFTER STOCK SYNC: {final_product}")
         
-        # AŞAMA 3: Medya ekle
+        # Medya ekle
         if sentos_product.get('id'):
             try:
+                logging.info("DEBUG - Starting media sync")
                 media_changes = media_sync.sync_media(shopify_api, sentos_api, product_gid, sentos_product, set_alt_text=True)
                 changes.extend(media_changes)
             except Exception as e:
-                logging.error(f"Medya sync hatası: {e}")
-                changes.append(f"⚠️ Medya sync hatası: {e}")
+                logging.error(f"DEBUG - Media sync hatası: {e}")
+                changes.append(f"Medya sync hatası: {e}")
         
-        # AŞAMA 4: Ürünü aktif yap
+        # Ürünü aktif yap
+        logging.info("DEBUG - Activating product")
         activate_mutation = """
         mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
@@ -140,19 +184,30 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         }
         """
         
-        shopify_api.execute_graphql(activate_mutation, {
+        activate_result = shopify_api.execute_graphql(activate_mutation, {
             "input": {"id": product_gid, "status": "ACTIVE"}
         })
-        changes.append("✅ Ürün aktif hale getirildi.")
         
-        logging.info(f"✅ Yeni ürün '{product_name}' başarıyla oluşturuldu.")
+        if activate_errors := activate_result.get('productUpdate', {}).get('userErrors', []):
+            logging.error(f"DEBUG - Activation errors: {activate_errors}")
+            changes.append(f"Aktivasyon hatası: {activate_errors}")
+        else:
+            logging.info("DEBUG - Product activated successfully")
+            changes.append("Ürün aktif hale getirildi.")
+        
+        # FINAL VERIFICATION
+        final_verify = shopify_api.execute_graphql(verify_query, {"id": product_gid})
+        final_product = final_verify.get('product', {})
+        logging.info(f"DEBUG - FINAL STATE: {final_product}")
+        
+        logging.info(f"=== PRODUCT CREATION COMPLETED: {product_name} ===")
         return changes
         
     except Exception as e:
-        error_msg = f"'{product_name}' oluşturulurken kritik hata: {e}"
+        error_msg = f"CREATION FAILED FOR {product_name}: {e}"
         logging.error(error_msg)
         traceback.print_exc()
-        return [f"❌ {error_msg}"]
+        return [f"GERÇEK HATA: {error_msg}"]
 
 def _process_single_product(shopify_api, sentos_api, sentos_product, sync_mode, progress_callback, stats, details, lock):
     """10-worker için optimize edilmiş tek ürün işleme"""
