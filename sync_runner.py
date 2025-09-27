@@ -417,7 +417,7 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         
         # ADIM 7: ÜRÜNÜ AKTİF YAP
         activate_mutation = """
-        mutation productUpdate($input: ProductUpdateInput!) {
+        mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
                 product {
                     id
@@ -430,7 +430,7 @@ def _create_product(shopify_api, sentos_api, sentos_product):
         """
         
         activate_result = shopify_api.execute_graphql(activate_mutation, {
-            "input": {"id": product_gid, "status": "ACTIVE"}
+            "input": {"id": product_gid, "status": "ACTIVE"} # Bu input ProductInput tipine uyar.
         })
         
         if not activate_result.get('productUpdate', {}).get('userErrors', []):
