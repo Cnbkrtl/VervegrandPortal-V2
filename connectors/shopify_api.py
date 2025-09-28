@@ -126,20 +126,40 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        DÜZELTİLDİ: İndirim bilgilerini de içerecek şekilde güncellendi.
+        DÜZELTİLDİ: Siparişin tüm detaylarını (indirim, kargo, ödeme, notlar vb.) çekecek şekilde güncellendi.
         """
         all_orders = []
-        # --- GraphQL Sorgusu İndirim Bilgileri Eklenerek Güncellendi ---
+        # --- EN KAPSAMLI GRAPHQL SORGUSU ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
-          orders(first: 25, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
+          orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
             pageInfo { hasNextPage, endCursor }
             edges {
               node {
-                id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus
+                id
+                name
+                createdAt
+                displayFinancialStatus
+                displayFulfillmentStatus
+                note
+                customer { firstName, lastName, email, phone, numberOfOrders }
+                shippingAddress { name, firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
+                billingAddress { name, firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
+                
+                subtotalPriceSet { shopMoney { amount, currencyCode } }
+                totalShippingPriceSet { shopMoney { amount, currencyCode } }
+                totalTaxSet { shopMoney { amount, currencyCode } }
+                totalDiscountsSet { shopMoney { amount, currencyCode } }
                 totalPriceSet { shopMoney { amount, currencyCode } }
-                customer { firstName, lastName, email, phone }
-                shippingAddress { firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
+                
+                transactions {
+                  createdAt
+                  status
+                  gateway
+                  amountSet { shopMoney { amount, currencyCode } }
+                  kind
+                }
+
                 lineItems(first: 50) {
                   nodes {
                     title, quantity
@@ -147,10 +167,16 @@ class ShopifyAPI:
                     originalUnitPriceSet { shopMoney { amount, currencyCode } }
                     discountedUnitPriceSet { shopMoney { amount, currencyCode } }
                     totalDiscountSet { shopMoney { amount, currencyCode } }
-                    discountAllocations {
-                      allocatedAmountSet { shopMoney { amount, currencyCode } }
-                      discountApplication { title }
-                    }
+                  }
+                }
+                
+                fulfillments {
+                  status
+                  createdAt
+                  trackingInfo {
+                    company
+                    number
+                    url
                   }
                 }
               }
@@ -161,21 +187,19 @@ class ShopifyAPI:
         variables = {"cursor": None, "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"}
         
         while True:
-            # ... (Döngünün geri kalanı öncekiyle aynı)
-            logging.info(f"Siparişler çekiliyor... Cursor: {variables['cursor']}")
+            logging.info(f"Detaylı siparişler çekiliyor... Cursor: {variables['cursor']}")
             data = self.execute_graphql(query, variables)
             orders_data = data.get("orders", {})
             for edge in orders_data.get("edges", []):
                 all_orders.append(edge["node"])
             
             page_info = orders_data.get("pageInfo", {})
-            if not page_info.get("hasNextPage"):
-                break
+            if not page_info.get("hasNextPage"): break
             
             variables["cursor"] = page_info["endCursor"]
             time.sleep(0.5)
 
-        logging.info(f"Tarih aralığı için toplam {len(all_orders)} sipariş çekildi.")
+        logging.info(f"Tarih aralığı için toplam {len(all_orders)} detaylı sipariş çekildi.")
         return all_orders
         
     def get_locations(self):
