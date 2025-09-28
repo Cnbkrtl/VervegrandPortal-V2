@@ -70,7 +70,7 @@ if 'shopify_orders_display' in st.session_state:
                     
                     st.write("**Ürünler**")
                     
-                    # --- HESAPLAMA MANTIĞI TAMAMEN YENİLENDİ ---
+                    # --- YENİ VE DOĞRU HESAPLAMA MANTIĞI ---
                     line_items_data = []
                     subtotal_from_lines = 0.0
                     discount_from_lines = 0.0
@@ -80,16 +80,11 @@ if 'shopify_orders_display' in st.session_state:
                         currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
                         
                         original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        # İndirimli birim fiyatı doğrudan API'den alıyoruz
-                        discounted_unit_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                         
-                        # Satır başına indirimi, orijinal ve indirimli fiyat farkından hesaplıyoruz
-                        line_item_discount = (original_price - discounted_unit_price) * quantity
+                        line_item_discount = (original_price - discounted_price) * quantity
+                        line_total = discounted_price * quantity
                         
-                        # Satır toplamı, indirimli fiyattan hesaplanır
-                        line_total = discounted_unit_price * quantity
-                        
-                        # Sipariş özeti için ara toplamı ve indirimi manuel olarak topluyoruz
                         subtotal_from_lines += original_price * quantity
                         discount_from_lines += line_item_discount
 
@@ -113,8 +108,9 @@ if 'shopify_orders_display' in st.session_state:
                         hide_index=True
                     )
                     
-                    # --- FİYAT ÖZETİ MANTIĞI GÜNCELLENDİ ---
+                    # --- FİYAT ÖZETİ DOĞRU VERİLERLE YENİLENDİ ---
                     shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    # İade edilmiş siparişlerde bile orijinal toplamı kullanıyoruz
                     total = float(order.get('originalTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                     
                     # Vergiyi, diğer tüm bilinen değerlerden yola çıkarak hesaplıyoruz
