@@ -273,11 +273,9 @@ def sync_single_product_by_sku(store_url, access_token, sentos_api_url, sentos_a
         shopify_api = ShopifyAPI(store_url, access_token)
         sentos_api = SentosAPI(sentos_api_url, sentos_api_key, sentos_api_secret, sentos_cookie)
         
-        # Media sync için patch
-        patch_shopify_api(shopify_api)
+        # HATA DÜZELTME: Fonksiyonu ait olduğu modül (media_sync) üzerinden çağır.
+        media_sync.patch_shopify_api(shopify_api)
         
-        # --- YENİ EKLENEN/DEĞİŞTİRİLEN KISIM BAŞLANGICI ---
-
         # Adım 1: Önce tam SKU ile Sentos'ta ürünü ara.
         sentos_product = sentos_api.get_product_by_sku(sku)
 
