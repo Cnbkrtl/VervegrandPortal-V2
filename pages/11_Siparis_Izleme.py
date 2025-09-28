@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py
+# pages/1_Siparis_Izleme.py (Fiyat Detayları Eklenmiş Hali)
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -68,16 +68,46 @@ if 'shopify_orders_display' in st.session_state and st.session_state['shopify_or
         financial_color = status_colors.get(financial_status, 'gray')
         fulfillment_color = status_colors.get(fulfillment_status, 'gray')
 
-        with st.expander(f"**Sipariş {order['name']}** - Müşteri: {order.get('customer', {}).get('firstName', '')} {order.get('customer', {}).get('lastName', '')}"):
+        customer_name = f"{order.get('customer', {}).get('firstName', '')} {order.get('customer', {}).get('lastName', '')}".strip()
+        expander_title = f"**Sipariş {order['name']}** - Müşteri: {customer_name or 'Misafir'}"
+
+        with st.expander(expander_title):
             c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-            c1.metric("Toplam Tutar", f"{order['totalPriceSet']['shopMoney']['amount']} {order['totalPriceSet']['shopMoney']['currencyCode']}")
+            
+            total_price_data = order.get('totalPriceSet', {}).get('shopMoney', {})
+            total_price_str = f"{total_price_data.get('amount', '0.00')} {total_price_data.get('currencyCode', '')}"
+            c1.metric("Toplam Tutar", total_price_str)
+            
             c2.markdown(f"**Ödeme:** <span style='background-color:{financial_color}; color:white; padding: 5px; border-radius: 5px;'>{financial_status}</span>", unsafe_allow_html=True)
             c3.markdown(f"**Gönderim:** <span style='background-color:{fulfillment_color}; color:white; padding: 5px; border-radius: 5px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
-            c4.info(f"Tarih: {pd.to_datetime(order['createdAt']).strftime('%d %B %Y, %H:%M')}")
+            c4.info(f"Tarih: {pd.to_datetime(order['createdAt']).strftime('%d/%m/%Y, %H:%M')}")
             
             st.write("**Ürünler**")
-            line_items_data = [
-                {"SKU": item['variant']['sku'], "Ürün": item['title'], "Miktar": item['quantity']}
-                for item in order['lineItems']['nodes']
-            ]
-            st.table(pd.DataFrame(line_items_data))
+
+            # --- DEĞİŞİKLİK BAŞLANGICI: Fiyat ve Tutar Sütunları Eklendi ---
+            line_items_data = []
+            for item in order.get('lineItems', {}).get('nodes', []):
+                variant_data = item.get('variant', {}) or {}
+                price_data = item.get('originalUnitPriceSet', {}).get('shopMoney', {})
+                
+                sku = variant_data.get('sku', 'N/A')
+                title = item.get('title', 'Ürün Adı Yok')
+                quantity = item.get('quantity', 0)
+                
+                amount = float(price_data.get('amount', 0.0))
+                currency_code = price_data.get('currencyCode', '')
+                
+                unit_price_str = f"{amount:.2f} {currency_code}"
+                line_total_str = f"{(quantity * amount):.2f} {currency_code}"
+
+                line_items_data.append({
+                    "SKU": sku,
+                    "Ürün": title,
+                    "Miktar": quantity,
+                    "Birim Fiyat": unit_price_str,
+                    "Toplam Tutar": line_total_str
+                })
+            
+            # Daha iyi bir görünüm için st.dataframe kullanıyoruz
+            st.dataframe(pd.DataFrame(line_items_data), use_container_width=True)
+            # --- DEĞİŞİKLİK SONU ---
