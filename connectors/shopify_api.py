@@ -126,10 +126,9 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        DÜZELTİLDİ: Orijinal ve Güncel toplamları ayrı ayrı çekerek REFUNDED durumunu çözüyor.
+        DÜZELTİLDİ: Shopify dökümanlarına göre en doğru fiyat ve indirim alanlarını çeker.
         """
         all_orders = []
-        # --- EN KAPSAMLI GRAPHQL SORGUSU (ORİJİNAL TOPLAMLAR EKLENDİ) ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
@@ -140,24 +139,30 @@ class ShopifyAPI:
                 customer { firstName, lastName, email, phone, numberOfOrders }
                 shippingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
                 
-                # Güncel (iade sonrası) değerler
-                currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
-                currentTotalDiscountsSet { shopMoney { amount, currencyCode } }
-                currentTotalTaxSet { shopMoney { amount, currencyCode } }
-                currentTotalPriceSet { shopMoney { amount, currencyCode } }
-                
-                # Orijinal (iade öncesi) değerler
-                originalTotalPriceSet { shopMoney { amount, currencyCode } }
-                
+                subtotalPriceSet { shopMoney { amount, currencyCode } }
                 totalShippingPriceSet { shopMoney { amount, currencyCode } }
+                totalTaxSet { shopMoney { amount, currencyCode } }
+                totalPriceSet { shopMoney { amount, currencyCode } }
                 
+                discountApplications(first: 10) {
+                  nodes {
+                    value {
+                      ... on MoneyV2 { amount }
+                      ... on PricingPercentageValue { percentage }
+                    }
+                    title
+                  }
+                }
+
                 lineItems(first: 50) {
                   nodes {
                     title, quantity
                     variant { sku, title }
                     originalUnitPriceSet { shopMoney { amount, currencyCode } }
                     discountedUnitPriceSet { shopMoney { amount, currencyCode } }
-                    totalDiscountSet { shopMoney { amount, currencyCode } }
+                    discountAllocations {
+                      allocatedAmountSet { shopMoney { amount, currencyCode } }
+                    }
                   }
                 }
               }
@@ -168,8 +173,8 @@ class ShopifyAPI:
         variables = {"cursor": None, "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"}
         
         while True:
-            logging.info(f"Detaylı siparişler çekiliyor... Cursor: {variables['cursor']}")
             data = self.execute_graphql(query, variables)
+            if not data: break
             orders_data = data.get("orders", {})
             for edge in orders_data.get("edges", []):
                 all_orders.append(edge["node"])
@@ -178,9 +183,8 @@ class ShopifyAPI:
             if not page_info.get("hasNextPage"): break
             
             variables["cursor"] = page_info["endCursor"]
-            time.sleep(0.5)
+            time.sleep(1) # Rate limit için bekleme
 
-        logging.info(f"Tarih aralığı için toplam {len(all_orders)} detaylı sipariş çekildi.")
         return all_orders
         
     def get_locations(self):
