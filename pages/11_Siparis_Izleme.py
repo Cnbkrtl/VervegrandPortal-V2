@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py
+# pages/1_Siparis_Izleme.py (Nihai Düzeltme: İndirim ve Toplam Hesaplamaları Tamamen Yenilendi)
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -7,7 +7,6 @@ import sys
 import os
 
 # --- Projenin ana dizinini Python'un arama yoluna ekle ---
-# Bu blok, 'operations' ve 'connectors' gibi klasörlerin bulunmasını sağlar.
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -18,11 +17,10 @@ from connectors.shopify_api import ShopifyAPI
 st.set_page_config(layout="wide")
 st.title("📊 Shopify Sipariş İzleme Ekranı")
 
-# --- Oturum ve API Kontrolleri ---
+# --- Oturum ve API Kontrolleri (Değişiklik yok) ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Lütfen devam etmek için giriş yapın.")
     st.stop()
-
 if 'shopify_status' not in st.session_state or st.session_state['shopify_status'] != 'connected':
     st.error("Shopify bağlantısı kurulu değil. Lütfen Ayarlar sayfasından bilgilerinizi kontrol edin.")
     st.stop()
@@ -33,7 +31,7 @@ def get_shopify_client():
 
 shopify_api = get_shopify_client()
 
-# --- Filtreleme Arayüzü ---
+# --- Filtreleme Arayüzü (Değişiklik yok) ---
 with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
@@ -46,7 +44,7 @@ with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
         with st.spinner("Shopify'dan tüm sipariş detayları çekiliyor..."):
             st.session_state['shopify_orders_display'] = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
 
-# --- Sipariş Listesi ---
+# --- Sipariş Listesi (TÜM MANTIK YENİLENDİ) ---
 if 'shopify_orders_display' in st.session_state:
     if not st.session_state['shopify_orders_display']:
         st.success("Belirtilen tarih aralığında sipariş bulunamadı.")
@@ -72,62 +70,64 @@ if 'shopify_orders_display' in st.session_state:
                     
                     st.write("**Ürünler**")
                     
+                    # --- HESAPLAMA MANTIĞI TAMAMEN YENİLENDİ ---
                     line_items_data = []
+                    subtotal_from_lines = 0.0
+                    discount_from_lines = 0.0
+                    
                     for item in order.get('lineItems', {}).get('nodes', []):
                         quantity = item.get('quantity', 0)
                         currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
                         
                         original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        line_total_discount = float(item.get('totalDiscountSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        # İndirimli birim fiyatı doğrudan API'den alıyoruz
+                        discounted_unit_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                         
+                        # Satır başına indirimi, orijinal ve indirimli fiyat farkından hesaplıyoruz
+                        line_item_discount = (original_price - discounted_unit_price) * quantity
+                        
+                        # Satır toplamı, indirimli fiyattan hesaplanır
+                        line_total = discounted_unit_price * quantity
+                        
+                        # Sipariş özeti için ara toplamı ve indirimi manuel olarak topluyoruz
+                        subtotal_from_lines += original_price * quantity
+                        discount_from_lines += line_item_discount
+
                         line_items_data.append({
                             "Ürün": item.get('title', 'N/A'),
                             "SKU": (item.get('variant') or {}).get('sku', 'N/A'),
-                            "Miktar": quantity,
-                            "Orijinal Fiyat": original_price,
-                            "İndirim": line_total_discount,
-                            "İndirimli Fiyat": discounted_price,
-                            "Toplam Tutar": discounted_price * quantity
+                            "Detay": f"{original_price:.2f} x {quantity}",
+                            "İndirim": line_item_discount,
+                            "Toplam": line_total
                         })
                     
                     df = pd.DataFrame(line_items_data)
                     st.dataframe(
                         df,
-                        column_order=("Ürün", "SKU", "Miktar", "Orijinal Fiyat", "İndirim", "İndirimli Fiyat", "Toplam Tutar"),
+                        column_order=("Ürün", "SKU", "Detay", "İndirim", "Toplam"),
                         column_config={
-                            "Orijinal Fiyat": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
                             "İndirim": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
-                            "İndirimli Fiyat": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
-                            "Toplam Tutar": st.column_config.NumberColumn(format=f"%.2f {currency_code}")
+                            "Toplam": st.column_config.NumberColumn(format=f"%.2f {currency_code}")
                         },
-                        use_container_width=True
+                        use_container_width=True,
+                        hide_index=True
                     )
                     
-                    currency = order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
+                    # --- FİYAT ÖZETİ MANTIĞI GÜNCELLENDİ ---
+                    shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    total = float(order.get('originalTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                     
-                    if financial_status == 'REFUNDED':
-                        original_total = float(order.get('originalTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        subtotal = sum(item['Orijinal Fiyat'] * item['Miktar'] for item in line_items_data)
-                        total_discount = sum(item['İndirim'] for item in line_items_data)
-                        tax = original_total - subtotal - shipping + total_discount
-                        total = original_total
-                    else:
-                        subtotal = float(order.get('currentSubtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        total_discount = float(order.get('currentTotalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        tax = float(order.get('currentTotalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                        total = float(order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    # Vergiyi, diğer tüm bilinen değerlerden yola çıkarak hesaplıyoruz
+                    tax = total - subtotal_from_lines + discount_from_lines - shipping
 
                     st.markdown(f"""
                     <div style="text-align: right; line-height: 1.8;">
-                        Ara Toplam: <b>{subtotal:.2f} {currency}</b><br>
-                        İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency}</b><br>
-                        Kargo: <b>{shipping:.2f} {currency}</b><br>
-                        Vergiler: <b>{tax:.2f} {currency}</b><br>
+                        Ara Toplam: <b>{subtotal_from_lines:.2f} {currency_code}</b><br>
+                        İndirimler: <b style="color: #28a745;">-{discount_from_lines:.2f} {currency_code}</b><br>
+                        Kargo: <b>{shipping:.2f} {currency_code}</b><br>
+                        Vergiler: <b>{tax:.2f} {currency_code}</b><br>
                         <hr style="margin: 4px 0;">
-                        <h4>Toplam: <b>{total:.2f} {currency}</b></h4>
+                        <h4>Toplam: <b>{total:.2f} {currency_code}</b></h4>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -149,4 +149,4 @@ if 'shopify_orders_display' in st.session_state:
 {shipping_addr.get('city', '')}, {shipping_addr.get('provinceCode', '')} {shipping_addr.get('zip', '')}
 {shipping_addr.get('country', '')}
                     """)
-                st.write("") # Boşluk bırakmak için
+                st.write("")
