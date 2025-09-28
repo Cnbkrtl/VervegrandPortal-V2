@@ -126,61 +126,30 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        DÜZELTİLDİ: Belirtilen tarih aralığındaki tüm siparişleri çeker.
-        MoneyV2 objesi kullanılarak scalar hatası giderildi.
+        DÜZELTİLDİ: İndirim bilgilerini de içerecek şekilde güncellendi.
         """
         all_orders = []
-        # --- HATA DÜZELTMESİ BU SORGUNUN İÇİNDE YAPILDI ---
+        # --- GraphQL Sorgusu İndirim Bilgileri Eklenerek Güncellendi ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 25, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
+            pageInfo { hasNextPage, endCursor }
             edges {
               node {
-                id
-                name
-                createdAt
-                displayFinancialStatus
-                displayFulfillmentStatus
-                totalPriceSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
-                customer {
-                  firstName
-                  lastName
-                  email
-                  phone
-                }
-                shippingAddress {
-                  firstName
-                  lastName
-                  address1
-                  address2
-                  city
-                  provinceCode
-                  zip
-                  country
-                  phone
-                }
+                id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus
+                totalPriceSet { shopMoney { amount, currencyCode } }
+                customer { firstName, lastName, email, phone }
+                shippingAddress { firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
                 lineItems(first: 50) {
                   nodes {
-                    title
-                    quantity
-                    variant {
-                      sku
-                      title
-                    }
-                    originalUnitPriceSet {      # <-- DEĞİŞİKLİK BURADA: originalUnitPrice yerine originalUnitPriceSet
-                      shopMoney {
-                        amount
-                        currencyCode
-                      }
+                    title, quantity
+                    variant { sku, title }
+                    originalUnitPriceSet { shopMoney { amount, currencyCode } }
+                    discountedUnitPriceSet { shopMoney { amount, currencyCode } }
+                    totalDiscountSet { shopMoney { amount, currencyCode } }
+                    discountAllocations {
+                      allocatedAmountSet { shopMoney { amount, currencyCode } }
+                      discountApplication { title }
                     }
                   }
                 }
@@ -189,12 +158,10 @@ class ShopifyAPI:
           }
         }
         """
-        variables = {
-            "cursor": None,
-            "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"
-        }
+        variables = {"cursor": None, "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"}
         
         while True:
+            # ... (Döngünün geri kalanı öncekiyle aynı)
             logging.info(f"Siparişler çekiliyor... Cursor: {variables['cursor']}")
             data = self.execute_graphql(query, variables)
             orders_data = data.get("orders", {})
