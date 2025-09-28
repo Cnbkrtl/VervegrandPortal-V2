@@ -126,9 +126,11 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        EKSİK FONKSİYON: Belirtilen tarih aralığındaki tüm siparişleri çeker.
+        DÜZELTİLDİ: Belirtilen tarih aralığındaki tüm siparişleri çeker.
+        MoneyV2 objesi kullanılarak scalar hatası giderildi.
         """
         all_orders = []
+        # --- HATA DÜZELTMESİ BU SORGUNUN İÇİNDE YAPILDI ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 25, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
@@ -174,9 +176,11 @@ class ShopifyAPI:
                       sku
                       title
                     }
-                    originalUnitPrice {
-                      amount
-                      currencyCode
+                    originalUnitPriceSet {      # <-- DEĞİŞİKLİK BURADA: originalUnitPrice yerine originalUnitPriceSet
+                      shopMoney {
+                        amount
+                        currencyCode
+                      }
                     }
                   }
                 }
