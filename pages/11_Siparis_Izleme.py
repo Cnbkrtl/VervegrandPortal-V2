@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py (Detaylı Görünüm İçin Yeniden Tasarlandı)
+# pages/1_Siparis_Izleme.py (Hesaplamalar ve Gösterim Düzeltildi)
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -17,19 +17,21 @@ from connectors.shopify_api import ShopifyAPI
 st.set_page_config(layout="wide")
 st.title("📊 Shopify Sipariş İzleme Ekranı")
 
-# --- Oturum ve API Kontrolleri ---
+# --- Oturum ve API Kontrolleri (Değişiklik yok) ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Lütfen devam etmek için giriş yapın.")
     st.stop()
 if 'shopify_status' not in st.session_state or st.session_state['shopify_status'] != 'connected':
     st.error("Shopify bağlantısı kurulu değil. Lütfen Ayarlar sayfasından bilgilerinizi kontrol edin.")
     st.stop()
+
 @st.cache_resource
 def get_shopify_client():
     return ShopifyAPI(st.session_state['shopify_store'], st.session_state['shopify_token'])
+
 shopify_api = get_shopify_client()
 
-# --- Filtreleme Arayüzü ---
+# --- Filtreleme Arayüzü (Değişiklik yok) ---
 with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
@@ -40,113 +42,92 @@ with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
         start_datetime = datetime.combine(start_date, datetime.min.time()).isoformat()
         end_datetime = datetime.combine(end_date, datetime.max.time()).isoformat()
         with st.spinner("Shopify'dan tüm sipariş detayları çekiliyor..."):
-            try:
-                st.session_state['shopify_orders_display'] = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
-            except Exception as e:
-                st.error(f"Siparişler çekilirken bir hata oluştu: {e}")
-                st.session_state['shopify_orders_display'] = []
+            st.session_state['shopify_orders_display'] = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
 
-# --- Sipariş Listesi ---
+# --- Sipariş Listesi (GÜNCELLENDİ) ---
 if 'shopify_orders_display' in st.session_state:
     if not st.session_state['shopify_orders_display']:
-        st.success("Belirtilen tarih aralığında sipariş bulunamadı veya henüz siparişler getirilmedi.")
+        st.success("Belirtilen tarih aralığında sipariş bulunamadı.")
     else:
         st.header(f"Bulunan Siparişler ({len(st.session_state['shopify_orders_display'])} adet)")
 
         for order in st.session_state['shopify_orders_display']:
-            # --- Status Renkleri ---
             financial_status = order.get('displayFinancialStatus', 'Bilinmiyor')
             fulfillment_status = order.get('displayFulfillmentStatus', 'Bilinmiyor')
             status_colors = {'PAID': 'green', 'PENDING': 'orange', 'REFUNDED': 'gray', 'FULFILLED': 'blue', 'UNFULFILLED': 'orange'}
             
-            # --- Ana Başlık ---
-            customer_name = (order.get('customer') or {}).get('firstName', '') + ' ' + (order.get('customer') or {}).get('lastName', '')
-            st.subheader(f"Sipariş {order['name']} ({pd.to_datetime(order['createdAt']).strftime('%d %B %Y')})")
-            st.markdown("---")
-
-            # --- Sipariş Detayları (3 Sütunlu Yapı) ---
-            col1, col2, col3 = st.columns([2, 1.2, 1.2])
-
-            # --- SÜTUN 1: ÜRÜNLER VE ÖDEME ÖZETİ ---
-            with col1:
-                st.markdown(f"**Ödeme:** <span style='background-color:{status_colors.get(financial_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{financial_status}</span> &nbsp;&nbsp; **Gönderim:** <span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
+            customer = order.get('customer') or {}
+            customer_name = f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip()
+            expander_title = f"Sipariş {order['name']} - Müşteri: {customer_name or 'Misafir'}"
+            
+            with st.container():
+                st.subheader(expander_title)
                 
-                # --- Ürünler Tablosu ---
-                line_items_data = []
-                for item in order.get('lineItems', {}).get('nodes', []):
-                    original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    quantity = item.get('quantity', 0)
-                    currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', '')
+                main_cols = st.columns([2.5, 1]) # Ana layout için sütunlar
+
+                with main_cols[0]: # Sol taraf (Ürünler ve Özet)
+                    st.markdown(f"**Ödeme:** <span style='background-color:{status_colors.get(financial_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{financial_status}</span> &nbsp;&nbsp; **Gönderim:** <span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
                     
-                    line_items_data.append({
-                        "Ürün": item.get('title', 'N/A'),
-                        "SKU": (item.get('variant') or {}).get('sku', 'N/A'),
-                        "Fiyat": f"{original_price:.2f} x {quantity}",
-                        "İndirim": f"{(original_price - discounted_price) * quantity:.2f}",
-                        "Toplam": f"{discounted_price * quantity:.2f} {currency_code}"
-                    })
-                st.table(pd.DataFrame(line_items_data))
+                    # --- Ürünler Tablosu (Hesaplamalar Düzeltildi) ---
+                    st.write("**Ürünler**")
+                    line_items_data = []
+                    for item in order.get('lineItems', {}).get('nodes', []):
+                        quantity = item.get('quantity', 0)
+                        currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', '')
+                        
+                        original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        
+                        # Satır başına toplam indirimi doğru al
+                        line_total_discount = float(item.get('totalDiscountSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        
+                        line_items_data.append({
+                            "Ürün": item.get('title', 'N/A'),
+                            "SKU": (item.get('variant') or {}).get('sku', 'N/A'),
+                            "Fiyat": f"{original_price:.2f} x {quantity}",
+                            "İndirim": f"{line_total_discount:.2f}",
+                            "Toplam": f"{(discounted_price * quantity):.2f} {currency_code}"
+                        })
+                    
+                    df = pd.DataFrame(line_items_data)
+                    st.dataframe(df.style.format({"İndirim": "{:.2f}", "Toplam": "{:.2f}"}), use_container_width=True)
 
-                # --- Fiyat Özeti ---
-                subtotal = float(order.get('subtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                total_discount = float(order.get('totalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                tax = float(order.get('totalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                total = float(order.get('totalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                currency = order.get('totalPriceSet', {}).get('shopMoney', {}).get('currencyCode', '')
+                    # --- Fiyat Özeti (Hesaplamalar Düzeltildi) ---
+                    subtotal = float(order.get('currentSubtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    total_discount = float(order.get('currentTotalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    tax = float(order.get('currentTotalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    total = float(order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    currency = order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('currencyCode', '')
 
-                st.markdown(f"""
-                <div style="text-align: right; line-height: 1.8;">
-                    Ara Toplam: <b>{subtotal:.2f} {currency}</b><br>
-                    İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency}</b><br>
-                    Kargo: <b>{shipping:.2f} {currency}</b><br>
-                    Vergiler: <b>{tax:.2f} {currency}</b><br>
-                    <hr style="margin: 4px 0;">
-                    <h4>Toplam: <b>{total:.2f} {currency}</b></h4>
-                </div>
-                """, unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style="text-align: right; line-height: 1.8;">
+                        Ara Toplam: <b>{subtotal:.2f} {currency}</b><br>
+                        İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency}</b><br>
+                        Kargo: <b>{shipping:.2f} {currency}</b><br>
+                        Vergiler: <b>{tax:.2f} {currency}</b><br>
+                        <hr style="margin: 4px 0;">
+                        <h4>Toplam: <b>{total:.2f} {currency}</b></h4>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            # --- SÜTUN 2: NOTLAR VE MÜŞTERİ BİLGİLERİ ---
-            with col2:
-                # --- Notlar ---
-                st.markdown("**Notlar**")
-                note = order.get('note')
-                st.info(note if note else "Müşteriden not yok.")
-                
-                # --- Müşteri ---
-                st.markdown("**Müşteri**")
-                customer = order.get('customer') or {}
-                st.write(f"**{customer.get('firstName', '')} {customer.get('lastName', '')}**")
-                st.write(f"{customer.get('numberOfOrders', 0)} sipariş")
-                st.write(f"📧 {customer.get('email', 'E-posta yok')}")
-                st.write(f"📞 {customer.get('phone', 'Telefon yok')}")
+                with main_cols[1]: # Sağ taraf (Not, Müşteri, Adresler)
+                    st.markdown("**Notlar**")
+                    note = order.get('note')
+                    st.info(note if note else "Müşteriden not yok.")
+                    
+                    st.markdown("**Müşteri**")
+                    st.write(f"**{customer_name or 'Misafir'}** ({customer.get('numberOfOrders', 0)} sipariş)")
+                    st.write(f"📧 {customer.get('email', 'N/A')}")
+                    st.write(f"📞 {customer.get('phone', 'N/A')}")
 
-            # --- SÜTUN 3: ADRESLER ---
-            with col3:
-                # --- Kargo Adresi ---
-                st.markdown("**Kargo Adresi**")
-                shipping_addr = order.get('shippingAddress') or {}
-                st.text(f"""
+                    st.markdown("**Kargo Adresi**")
+                    shipping_addr = order.get('shippingAddress') or {}
+                    st.text(f"""
 {shipping_addr.get('name', '')}
 {shipping_addr.get('address1', '')}
 {shipping_addr.get('address2', '') or ''}
 {shipping_addr.get('city', '')}, {shipping_addr.get('provinceCode', '')} {shipping_addr.get('zip', '')}
 {shipping_addr.get('country', '')}
-                """)
-                
-                # --- Fatura Adresi ---
-                st.markdown("**Fatura Adresi**")
-                billing_addr = order.get('billingAddress') or {}
-                if billing_addr == shipping_addr:
-                    st.write("_Kargo adresiyle aynı_")
-                else:
-                    st.text(f"""
-{billing_addr.get('name', '')}
-{billing_addr.get('address1', '')}
-{billing_addr.get('address2', '') or ''}
-{billing_addr.get('city', '')}, {billing_addr.get('provinceCode', '')} {billing_addr.get('zip', '')}
-{billing_addr.get('country', '')}
                     """)
-            
-            st.markdown("---")
+                st.markdown("---")

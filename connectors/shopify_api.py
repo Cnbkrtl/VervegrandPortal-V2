@@ -126,40 +126,26 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        DÜZELTİLDİ: Siparişin tüm detaylarını (indirim, kargo, ödeme, notlar vb.) çekecek şekilde güncellendi.
+        DÜZELTİLDİ: İndirim, iade ve tüm toplamları en doğru şekilde almak için sorgu revize edildi.
         """
         all_orders = []
-        # --- EN KAPSAMLI GRAPHQL SORGUSU ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
             pageInfo { hasNextPage, endCursor }
             edges {
               node {
-                id
-                name
-                createdAt
-                displayFinancialStatus
-                displayFulfillmentStatus
-                note
+                id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus, note
                 customer { firstName, lastName, email, phone, numberOfOrders }
-                shippingAddress { name, firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
-                billingAddress { name, firstName, lastName, address1, address2, city, provinceCode, zip, country, phone }
+                shippingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
+                billingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
                 
-                subtotalPriceSet { shopMoney { amount, currencyCode } }
+                currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
+                currentTotalDiscountsSet { shopMoney { amount, currencyCode } }
+                currentTotalTaxSet { shopMoney { amount, currencyCode } }
                 totalShippingPriceSet { shopMoney { amount, currencyCode } }
-                totalTaxSet { shopMoney { amount, currencyCode } }
-                totalDiscountsSet { shopMoney { amount, currencyCode } }
-                totalPriceSet { shopMoney { amount, currencyCode } }
+                currentTotalPriceSet { shopMoney { amount, currencyCode } }
                 
-                transactions {
-                  createdAt
-                  status
-                  gateway
-                  amountSet { shopMoney { amount, currencyCode } }
-                  kind
-                }
-
                 lineItems(first: 50) {
                   nodes {
                     title, quantity
@@ -167,16 +153,6 @@ class ShopifyAPI:
                     originalUnitPriceSet { shopMoney { amount, currencyCode } }
                     discountedUnitPriceSet { shopMoney { amount, currencyCode } }
                     totalDiscountSet { shopMoney { amount, currencyCode } }
-                  }
-                }
-                
-                fulfillments {
-                  status
-                  createdAt
-                  trackingInfo {
-                    company
-                    number
-                    url
                   }
                 }
               }
