@@ -123,6 +123,74 @@ class ShopifyAPI:
                  raise e
         
         raise Exception(f"API isteği {max_retries} denemenin ardından başarısız oldu.")
+    
+    def get_orders_by_date_range(self, start_date_iso, end_date_iso):
+        all_orders = []
+        query = """
+        query getOrders($cursor: String, $filter_query: String!) {
+          orders(first: 25, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
+            pageInfo { hasNextPage endCursor }
+            edges {
+              node {
+                id name createdAt displayFinancialStatus displayFulfillmentStatus
+                totalPriceSet { shopMoney { amount currencyCode } }
+                customer { firstName lastName email phone }
+                shippingAddress { firstName lastName address1 address2 city provinceCode zip country phone }
+                lineItems(first: 50) {
+                  nodes {
+                    title quantity variant { sku title }
+                    originalUnitPrice { amount currencyCode }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        variables = {"cursor": None, "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"}
+        while True:
+            logging.info(f"Siparişler çekiliyor... Cursor: {variables['cursor']}")
+            data = self.execute_graphql(query, variables)
+            orders_data = data.get("orders", {})
+            for edge in orders_data.get("edges", []):
+                all_orders.append(edge["node"])
+            page_info = orders_data.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            variables["cursor"] = page_info["endCursor"]
+            time.sleep(0.5)
+        logging.info(f"Tarih aralığı için toplam {len(all_orders)} sipariş çekildi.")
+        return all_orders
+
+    def get_locations(self):
+        """
+        YENİ FONKSİYON: Mağazadaki tüm aktif envanter konumlarını (locations) çeker.
+        """
+        query = """
+        query {
+          locations(first: 25, query:"status:active") {
+            edges {
+              node {
+                id
+                name
+                address {
+                  city
+                  country
+                }
+              }
+            }
+          }
+        }
+        """
+        try:
+            result = self.execute_graphql(query)
+            locations_edges = result.get("locations", {}).get("edges", [])
+            locations = [edge['node'] for edge in locations_edges]
+            logging.info(f"{len(locations)} adet aktif Shopify lokasyonu bulundu.")
+            return locations
+        except Exception as e:
+            logging.error(f"Shopify lokasyonları çekilirken hata: {e}")
+            return []
 
     def get_all_collections(self, progress_callback=None):
         all_collections = []
