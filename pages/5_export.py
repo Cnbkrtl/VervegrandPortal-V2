@@ -78,14 +78,14 @@ def get_sentos_data_by_base_code(sentos_api, model_codes_to_fetch):
                 
                 # YENİ EKLENDİ: Satış Fiyatı (price) bulma mantığı
                 selling_price = None
-                main_selling_price = sentos_product.get('price1')
+                main_selling_price = sentos_product.get('sale_price')
                 if main_selling_price and float(str(main_selling_price).replace(',', '.')) > 0:
                     selling_price = main_selling_price
                 else:
                     variants = sentos_product.get('variants', [])
                     if variants:
                         for variant in variants:
-                            variant_selling_price = variant.get('price1')
+                            variant_selling_price = variant.get('sale_price')
                             if variant_selling_price and float(str(variant_selling_price).replace(',', '.')) > 0:
                                 selling_price = variant_selling_price
                                 break
