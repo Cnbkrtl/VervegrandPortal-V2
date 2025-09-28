@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py (Hesaplamalar ve Gösterim Düzeltildi)
+# pages/1_Siparis_Izleme.py
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -7,6 +7,7 @@ import sys
 import os
 
 # --- Projenin ana dizinini Python'un arama yoluna ekle ---
+# Bu blok, 'operations' ve 'connectors' gibi klasörlerin bulunmasını sağlar.
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -17,19 +18,22 @@ from connectors.shopify_api import ShopifyAPI
 st.set_page_config(layout="wide")
 st.title("📊 Shopify Sipariş İzleme Ekranı")
 
-# --- Oturum ve API Kontrolleri (Değişiklik yok) ---
+# --- Oturum ve API Kontrolleri ---
 if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
     st.warning("Lütfen devam etmek için giriş yapın.")
     st.stop()
+
 if 'shopify_status' not in st.session_state or st.session_state['shopify_status'] != 'connected':
     st.error("Shopify bağlantısı kurulu değil. Lütfen Ayarlar sayfasından bilgilerinizi kontrol edin.")
     st.stop()
+
 @st.cache_resource
 def get_shopify_client():
     return ShopifyAPI(st.session_state['shopify_store'], st.session_state['shopify_token'])
+
 shopify_api = get_shopify_client()
 
-# --- Filtreleme Arayüzü (Değişiklik yok) ---
+# --- Filtreleme Arayüzü ---
 with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
     col1, col2 = st.columns(2)
     with col1:
@@ -42,7 +46,7 @@ with st.expander("Siparişleri Filtrele ve Görüntüle", expanded=True):
         with st.spinner("Shopify'dan tüm sipariş detayları çekiliyor..."):
             st.session_state['shopify_orders_display'] = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
 
-# --- Sipariş Listesi (GÜNCELLENDİ) ---
+# --- Sipariş Listesi ---
 if 'shopify_orders_display' in st.session_state:
     if not st.session_state['shopify_orders_display']:
         st.success("Belirtilen tarih aralığında sipariş bulunamadı.")
@@ -58,20 +62,21 @@ if 'shopify_orders_display' in st.session_state:
             customer_name = f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip()
             expander_title = f"Sipariş {order['name']} - Müşteri: {customer_name or 'Misafir'}"
             
-            with st.container(border=True): # Siparişleri daha belirgin ayırmak için container
+            with st.container(border=True):
                 st.subheader(expander_title)
                 
-                main_cols = st.columns([2.5, 1.2]) # Ana layout
+                main_cols = st.columns([2.5, 1.2])
 
                 with main_cols[0]: # Sol taraf (Ürünler ve Özet)
                     st.markdown(f"**Ödeme:** <span style='background-color:{status_colors.get(financial_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{financial_status}</span> &nbsp;&nbsp; **Gönderim:** <span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
                     
                     st.write("**Ürünler**")
-
-                    # --- DEĞİŞİKLİK BAŞLANGICI: DataFrame'e ham sayısal veri koyma ---
+                    
                     line_items_data = []
                     for item in order.get('lineItems', {}).get('nodes', []):
                         quantity = item.get('quantity', 0)
+                        currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
+                        
                         original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                         discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                         line_total_discount = float(item.get('totalDiscountSet', {}).get('shopMoney', {}).get('amount', 0.0))
@@ -87,9 +92,6 @@ if 'shopify_orders_display' in st.session_state:
                         })
                     
                     df = pd.DataFrame(line_items_data)
-                    currency_code = order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
-
-                    # st.dataframe'in kendi formatlama özelliklerini kullanıyoruz
                     st.dataframe(
                         df,
                         column_order=("Ürün", "SKU", "Miktar", "Orijinal Fiyat", "İndirim", "İndirimli Fiyat", "Toplam Tutar"),
@@ -101,23 +103,31 @@ if 'shopify_orders_display' in st.session_state:
                         },
                         use_container_width=True
                     )
-                    # --- DEĞİŞİKLİK SONU ---
-
-                    # --- Fiyat Özeti (Hesaplamalar Düzeltildi) ---
-                    subtotal = float(order.get('currentSubtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    total_discount = float(order.get('currentTotalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    tax = float(order.get('currentTotalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    total = float(order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    
+                    currency = order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
+                    
+                    if financial_status == 'REFUNDED':
+                        original_total = float(order.get('originalTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        subtotal = sum(item['Orijinal Fiyat'] * item['Miktar'] for item in line_items_data)
+                        total_discount = sum(item['İndirim'] for item in line_items_data)
+                        tax = original_total - subtotal - shipping + total_discount
+                        total = original_total
+                    else:
+                        subtotal = float(order.get('currentSubtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        total_discount = float(order.get('currentTotalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        tax = float(order.get('currentTotalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        total = float(order.get('currentTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
 
                     st.markdown(f"""
                     <div style="text-align: right; line-height: 1.8;">
-                        Ara Toplam: <b>{subtotal:.2f} {currency_code}</b><br>
-                        İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency_code}</b><br>
-                        Kargo: <b>{shipping:.2f} {currency_code}</b><br>
-                        Vergiler: <b>{tax:.2f} {currency_code}</b><br>
+                        Ara Toplam: <b>{subtotal:.2f} {currency}</b><br>
+                        İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency}</b><br>
+                        Kargo: <b>{shipping:.2f} {currency}</b><br>
+                        Vergiler: <b>{tax:.2f} {currency}</b><br>
                         <hr style="margin: 4px 0;">
-                        <h4>Toplam: <b>{total:.2f} {currency_code}</b></h4>
+                        <h4>Toplam: <b>{total:.2f} {currency}</b></h4>
                     </div>
                     """, unsafe_allow_html=True)
 

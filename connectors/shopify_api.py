@@ -126,9 +126,10 @@ class ShopifyAPI:
     
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
-        DÜZELTİLDİ: İndirim, iade ve tüm toplamları en doğru şekilde almak için sorgu revize edildi.
+        DÜZELTİLDİ: Orijinal ve Güncel toplamları ayrı ayrı çekerek REFUNDED durumunu çözüyor.
         """
         all_orders = []
+        # --- EN KAPSAMLI GRAPHQL SORGUSU (ORİJİNAL TOPLAMLAR EKLENDİ) ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
@@ -138,13 +139,17 @@ class ShopifyAPI:
                 id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus, note
                 customer { firstName, lastName, email, phone, numberOfOrders }
                 shippingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
-                billingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
                 
+                # Güncel (iade sonrası) değerler
                 currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
                 currentTotalDiscountsSet { shopMoney { amount, currencyCode } }
                 currentTotalTaxSet { shopMoney { amount, currencyCode } }
-                totalShippingPriceSet { shopMoney { amount, currencyCode } }
                 currentTotalPriceSet { shopMoney { amount, currencyCode } }
+                
+                # Orijinal (iade öncesi) değerler
+                originalTotalPriceSet { shopMoney { amount, currencyCode } }
+                
+                totalShippingPriceSet { shopMoney { amount, currencyCode } }
                 
                 lineItems(first: 50) {
                   nodes {
