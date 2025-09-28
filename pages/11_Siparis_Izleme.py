@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py (Nihai Düzeltme: İndirim ve Toplam Hesaplamaları Tamamen Yenilendi)
+# pages/1_Siparis_Izleme.py (Nihai Düzeltme: Shopify ile Birebir Uyumlu Hesaplama)
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -110,10 +110,7 @@ if 'shopify_orders_display' in st.session_state:
                     
                     # --- FİYAT ÖZETİ DOĞRU VERİLERLE YENİLENDİ ---
                     shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    # İade edilmiş siparişlerde bile orijinal toplamı kullanıyoruz
                     total = float(order.get('originalTotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                    
-                    # Vergiyi, diğer tüm bilinen değerlerden yola çıkarak hesaplıyoruz
                     tax = total - subtotal_from_lines + discount_from_lines - shipping
 
                     st.markdown(f"""
