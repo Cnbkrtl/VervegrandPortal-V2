@@ -273,18 +273,37 @@ def sync_single_product_by_sku(store_url, access_token, sentos_api_url, sentos_a
         shopify_api = ShopifyAPI(store_url, access_token)
         sentos_api = SentosAPI(sentos_api_url, sentos_api_key, sentos_api_secret, sentos_cookie)
         
-        sentos_product = sentos_api.get_product_by_sku(sku)
-        if not sentos_product:
-            return {'success': False, 'message': f"'{sku}' SKU'su ile Sentos'ta ürün bulunamadı."}
+        # Media sync için patch
+        patch_shopify_api(shopify_api)
         
+        # --- YENİ EKLENEN/DEĞİŞTİRİLEN KISIM BAŞLANGICI ---
+
+        # Adım 1: Önce tam SKU ile Sentos'ta ürünü ara.
+        sentos_product = sentos_api.get_product_by_sku(sku)
+
+        # Adım 2: Bulunamazsa, SKU'dan ana model kodunu türetip tekrar ara.
+        if not sentos_product:
+            logging.warning(f"'{sku}' tam SKU'su ile Sentos'ta ürün bulunamadı. Ana model kodu türetilip tekrar aranacak.")
+            # Genellikle ana model kodu, varyant bilgisinden (örn: -S-SIYAH) önceki kısımdır.
+            base_sku = sku.split('-')[0].strip()
+            
+            # Eğer türetilen SKU, orijinal SKU ile aynıysa veya boşsa, tekrar arama yapmaya gerek yok.
+            if base_sku and base_sku != sku:
+                logging.info(f"Türetilen ana model kodu: '{base_sku}'. Bu kod ile tekrar arama yapılıyor...")
+                sentos_product = sentos_api.get_product_by_sku(base_sku)
+            
+        # Adım 3: Hala bulunamadıysa hata ver.
+        if not sentos_product:
+            return {'success': False, 'message': f"'{sku}' veya türetilmiş ana SKU ile Sentos'ta ürün bulunamadı."}
+        
+        # --- YENİ EKLENEN/DEĞİŞTİRİLEN KISIM SONU ---
+
         shopify_api.load_all_products_for_cache()
         existing_product = _find_shopify_product(shopify_api, sentos_product)
         
         if not existing_product:
-            logging.info(f"Shopify'da ürün bulunamadı, '{sku}' SKU'lu ürün oluşturulacak.")
-            changes_made = _create_product(shopify_api, sentos_api, sentos_product)
-            product_name = sentos_product.get('name', sku)
-            return {'success': True, 'product_name': product_name, 'changes': changes_made}
+            # Sentos'ta ürün var ama Shopify'da yoksa, bu daha bilgilendirici bir mesajdır.
+            return {'success': False, 'message': f"Ürün Sentos'ta bulundu ancak '{sentos_product.get('name', sku)}' adıyla Shopify'da eşleşen bir ürün bulunamadı. Lütfen önce tam senkronizasyon çalıştırın."}
         
         changes_made = _update_product(shopify_api, sentos_api, sentos_product, existing_product, "Tam Senkronizasyon (Tümünü Oluştur ve Güncelle)")
         product_name = sentos_product.get('name', sku)
