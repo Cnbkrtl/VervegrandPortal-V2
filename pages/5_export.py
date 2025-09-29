@@ -1,4 +1,4 @@
-# pages/5_export.py (Fiyatlar Sadece Sentos'tan Alınacak Şekilde Güncellendi)
+# pages/5_export.py (Alış ve Satış Fiyatları Sentos'tan Alınacak Şekilde Güncellendi)
 
 import streamlit as st
 import pandas as pd
@@ -44,7 +44,9 @@ def get_collections(_shopify_api):
 
 def get_sentos_data_by_base_code(sentos_api, model_codes_to_fetch):
     """
-    Verilen ANA ürün kodları listesini kullanarak Sentos'tan alış fiyatı ve doğrulanmış ana kod bilgisini çeker.
+    # GÜNCELLENDİ:
+    Verilen ANA ürün kodları listesini kullanarak Sentos'tan ALIŞ ve SATIŞ fiyatlarını 
+    ve doğrulanmış ana kod bilgisini çeker.
     """
     data_map = {}
     unique_model_codes = list(set(model_codes_to_fetch))
@@ -52,36 +54,54 @@ def get_sentos_data_by_base_code(sentos_api, model_codes_to_fetch):
     if total_codes == 0:
         return {}
 
-    progress_bar = st.progress(0, "Sentos'tan alış fiyatları çekiliyor...")
+    # GÜNCELLENDİ: Progress bar metni güncellendi.
+    progress_bar = st.progress(0, "Sentos'tan alış ve satış fiyatları çekiliyor...")
     
     for i, code in enumerate(unique_model_codes):
         if not code: continue
         try:
             sentos_product = sentos_api.get_product_by_sku(code)
             if sentos_product:
-                price = None
-                main_price = sentos_product.get('purchase_price')
-                
-                if main_price and float(str(main_price).replace(',', '.')) > 0:
-                    price = main_price
+                # Alış Fiyatı (purchase_price) bulma mantığı
+                purchase_price = None
+                main_purchase_price = sentos_product.get('purchase_price')
+                if main_purchase_price and float(str(main_purchase_price).replace(',', '.')) > 0:
+                    purchase_price = main_purchase_price
                 else:
                     variants = sentos_product.get('variants', [])
                     if variants:
                         for variant in variants:
-                            variant_price = variant.get('purchase_price')
-                            if variant_price and float(str(variant_price).replace(',', '.')) > 0:
-                                price = variant_price
+                            variant_purchase_price = variant.get('purchase_price')
+                            if variant_purchase_price and float(str(variant_purchase_price).replace(',', '.')) > 0:
+                                purchase_price = variant_purchase_price
                                 break
                 
+                # YENİ EKLENDİ: Satış Fiyatı (price) bulma mantığı
+                selling_price = None
+                main_selling_price = sentos_product.get('sale_price')
+                if main_selling_price and float(str(main_selling_price).replace(',', '.')) > 0:
+                    selling_price = main_selling_price
+                else:
+                    variants = sentos_product.get('variants', [])
+                    if variants:
+                        for variant in variants:
+                            variant_selling_price = variant.get('sale_price')
+                            if variant_selling_price and float(str(variant_selling_price).replace(',', '.')) > 0:
+                                selling_price = variant_selling_price
+                                break
+
                 verified_main_code = sentos_product.get('sku', code)
+                # GÜNCELLENDİ: data_map'e satış fiyatı da eklendi.
                 data_map[code] = {
                     'verified_code': verified_main_code,
-                    'purchase_price': float(str(price).replace(',', '.')) if price is not None else None
+                    'purchase_price': float(str(purchase_price).replace(',', '.')) if purchase_price is not None else None,
+                    'selling_price': float(str(selling_price).replace(',', '.')) if selling_price is not None else None
                 }
         except Exception as e:
             logging.warning(f"Sentos'tan '{code}' SKU'su için veri çekilirken bir hata oluştu: {e}")
             pass
-        progress_bar.progress((i + 1) / total_codes, f"Sentos'tan alış fiyatları çekiliyor... ({i+1}/{total_codes})")
+        # GÜNCELLENDİ: Progress bar metni güncellendi.
+        progress_bar.progress((i + 1) / total_codes, f"Sentos'tan fiyatlar çekiliyor... ({i+1}/{total_codes})")
     
     progress_bar.empty()
     return data_map
@@ -105,14 +125,11 @@ def get_base_code_from_skus(variant_skus):
 
 @st.cache_data(ttl=600)
 def process_data(_shopify_api, _sentos_api, selected_collection_ids):
-    # --- YENİ MANTIK BAŞLANGICI ---
     status_text = st.empty()
     
-    # Adım 1: Shopify'dan temel ürün bilgilerini (stok, görsel vb.) çek
     status_text.info("1/4: Shopify API'den ürün verileri çekiliyor...")
     all_products = _shopify_api.get_all_products_for_export(progress_callback=lambda msg: status_text.info(f"1/4: Shopify API'den ürünler çekiliyor... {msg}"))
 
-    # Seçilen koleksiyonlara göre filtrele
     products_data = all_products
     if selected_collection_ids:
         products_data = [
@@ -120,7 +137,6 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
             if p.get('collections') and not {c['node']['id'] for c in p['collections']['edges']}.isdisjoint(selected_collection_ids)
         ]
     
-    # Adım 2: Shopify verisini işle ve Sentos'tan fiyat almak için TÜM model kodlarını topla
     status_text.info(f"2/4: {len(products_data)} ürün işleniyor ve model kodları toplanıyor...")
     processed_data, all_sizes, all_base_codes_to_fetch = {}, set(), set()
 
@@ -133,7 +149,6 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
         if base_model_code:
             all_base_codes_to_fetch.add(base_model_code)
         
-        # Ürünleri renk bazında grupla
         variants_by_group = {}
         has_color_option = any('renk' in opt['name'].lower() for v in variants if v.get('node', {}).get('selectedOptions') for opt in v['node']['selectedOptions'])
         for v_edge in variants:
@@ -155,10 +170,11 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
             image_data = product.get('featuredImage')
             image_url = image_data.get('url', '') if image_data else ''
             
-            # Alış fiyatı başlangıçta boş bırakılıyor
+            # GÜNCELLENDİ: Alış ve Satış fiyatları başlangıçta boş bırakılıyor
             row = {"TÜR": collection_names, "GÖRSEL_URL": image_url, "MODEL KODU": base_model_code,
                    "ÜRÜN LİNKİ": f"{_shopify_api.store_url}/products/{product['handle']}",
-                   "RENK": group_key if has_color_option else '', "sizes": {}, "ALIŞ FİYATI": None}
+                   "RENK": group_key if has_color_option else '', "sizes": {}, 
+                   "ALIŞ FİYATI": None, "SATIŞ FIYATI": None} # YENİ: SATIŞ FIYATI eklendi
 
             total_stock = 0
             for variant in group_variants:
@@ -171,22 +187,21 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
             row["TOPLAM STOK"] = total_stock
             processed_data[key] = row
 
-    # Adım 3: Toplanan TÜM model kodları için Sentos'tan toplu halde fiyatları çek
     sentos_data_map = {}
     if all_base_codes_to_fetch:
-        status_text.info(f"3/4: {len(all_base_codes_to_fetch)} ürün için Sentos'tan alış fiyatları çekiliyor...")
+        # GÜNCELLENDİ: Status metni güncellendi.
+        status_text.info(f"3/4: {len(all_base_codes_to_fetch)} ürün için Sentos'tan alış ve satış fiyatları çekiliyor...")
         sentos_data_map = get_sentos_data_by_base_code(_sentos_api, list(all_base_codes_to_fetch))
 
-    # Adım 4: Sentos'tan gelen fiyatları ve doğrulanmış model kodlarını ürün verisine işle
     status_text.info("4/4: Fiyatlar ve ürün bilgileri birleştiriliyor...")
     for data in processed_data.values():
         base_code = data.get("MODEL KODU")
         if base_code in sentos_data_map:
             sentos_info = sentos_data_map[base_code]
             data["ALIŞ FİYATI"] = sentos_info.get('purchase_price')
+            data["SATIŞ FIYATI"] = sentos_info.get('selling_price') # YENİ EKLENDİ: Satış fiyatı verisi işleniyor.
             data["MODEL KODU"] = sentos_info.get('verified_code', base_code)
 
-    # Adım 5: Nihai tabloyu oluştur
     sorted_sizes = sorted(list(all_sizes), key=_get_apparel_sort_key)
     final_rows = []
     for data in processed_data.values():
@@ -197,6 +212,7 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
         for size in sorted_sizes: new_row[size] = data["sizes"].get(size, 0)
         new_row["TOPLAM STOK"] = data["TOPLAM STOK"]
         new_row["ALIŞ FİYATI"] = data["ALIŞ FİYATI"]
+        new_row["SATIŞ FIYATI"] = data["SATIŞ FIYATI"] # YENİ EKLENDİ: Satış fiyatı son tabloya ekleniyor.
         final_rows.append(new_row)
 
     if not final_rows:
@@ -206,7 +222,6 @@ def process_data(_shopify_api, _sentos_api, selected_collection_ids):
     df = pd.DataFrame(final_rows)
     status_text.empty()
     return df
-    # --- YENİ MANTIK SONU ---
 
 def upload_to_gsheets(df, sheet_name):
     try:

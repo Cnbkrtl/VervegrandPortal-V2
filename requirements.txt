@@ -15,3 +15,4 @@ google-auth-oauthlib
 google-auth-httplib2
 numpy
 plotly
+urllib3>=1.26.0

@@ -16,8 +16,8 @@ class SentosAPI:
         self.api_cookie = api_cookie
         self.headers = {"Content-Type": "application/json", "Accept": "application/json"}
         # Yeniden deneme ayarları
-        self.max_retries = 3
-        self.base_delay = 5  # saniye cinsinden
+        self.max_retries = 5
+        self.base_delay = 15 # saniye cinsinden
 
     def _make_request(self, method, endpoint, auth_type='basic', data=None, params=None, is_internal_call=False):
         if is_internal_call:
@@ -40,7 +40,7 @@ class SentosAPI:
 
         for attempt in range(self.max_retries):
             try:
-                response = requests.request(method, url, headers=headers, auth=auth, data=data, params=params, timeout=30)
+                response = requests.request(method, url, headers=headers, auth=auth, data=data, params=params, timeout=90)
                 response.raise_for_status()
                 return response
             except requests.exceptions.HTTPError as e:
@@ -151,6 +151,29 @@ class SentosAPI:
         except Exception as e:
             logging.error(f"Sentos'ta SKU '{sku}' aranırken hata: {e}")
             raise
+
+    def get_warehouses(self):
+        """
+        YENİ FONKSİYON: Sentos'taki tüm depoları çeker.
+        """
+        endpoint = "/warehouses"
+        try:
+            response = self._make_request("GET", endpoint)
+            warehouses = response.get('data', [])
+            logging.info(f"Sentos'tan {len(warehouses)} adet depo çekildi.")
+            return warehouses
+        except Exception as e:
+            logging.error(f"Sentos depoları çekilirken hata: {e}")
+            return []
+
+    def update_shopify_location_mapping(self, sentos_magaza_id, shopify_location_id, sentos_warehouse_id):
+        """
+        YENİ FONKSİYON (PLACEHOLDER): Shopify konumu ile Sentos deposu eşleştirmesini günceller.
+        Bu fonksiyonun içi, Sentos panelinin ayarları kaydetmek için kullandığı gerçek
+        iç API isteği (muhtemelen bir PHPLiveX çağrısı) ile doldurulmalıdır.
+        """
+        logging.warning("update_shopify_location_mapping fonksiyonu henüz tam olarak implemente edilmemiştir. Gerçek endpoint ve payload gereklidir.")
+        return {"success": True, "message": f"Eşleştirme '{sentos_magaza_id}' için güncellendi (SIMULASYON)."}    
 
     def test_connection(self):
         try:
