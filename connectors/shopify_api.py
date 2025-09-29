@@ -119,11 +119,7 @@ class ShopifyAPI:
         raise Exception(f"API isteği {max_retries} denemenin ardından başarısız oldu.")
 
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
-        """
-        DÜZELTİLDİ: Shopify dökümanlarına göre en doğru fiyat ve indirim alanlarını çeker.
-        """
         all_orders = []
-        # --- DiscountApplication alanı dökümantasyona göre düzeltildi ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
@@ -132,26 +128,12 @@ class ShopifyAPI:
               node {
                 id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus, note
                 customer { firstName, lastName, email, phone, numberOfOrders }
-                shippingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
                 
-                subtotalPriceSet { shopMoney { amount, currencyCode } }
+                currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
+                originalTotalPriceSet { shopMoney { amount, currencyCode } }
                 totalShippingPriceSet { shopMoney { amount, currencyCode } }
                 totalTaxSet { shopMoney { amount, currencyCode } }
-                totalPriceSet { shopMoney { amount, currencyCode } }
-                
-                discountApplications(first: 10) {
-                  nodes {
-                    value {
-                      ... on MoneyV2 { amount }
-                      ... on PricingPercentageValue { percentage }
-                    }
-                    # --- KESİN DÜZELTME BURADA ---
-                    ... on DiscountCodeApplication { code } # 'title' yerine 'code'
-                    ... on AutomaticDiscountApplication { title }
-                    ... on ManualDiscountApplication { title }
-                    ... on ScriptDiscountApplication { title }
-                  }
-                }
+                totalDiscountsSet { shopMoney { amount, currencyCode } }
 
                 lineItems(first: 50) {
                   nodes {
@@ -159,9 +141,7 @@ class ShopifyAPI:
                     variant { sku, title }
                     originalUnitPriceSet { shopMoney { amount, currencyCode } }
                     discountedUnitPriceSet { shopMoney { amount, currencyCode } }
-                    discountAllocations {
-                      allocatedAmountSet { shopMoney { amount, currencyCode } }
-                    }
+                    totalDiscountSet { shopMoney { amount, currencyCode } }
                   }
                 }
               }
@@ -191,10 +171,7 @@ class ShopifyAPI:
         query {
           locations(first: 25, query:"status:active") {
             edges {
-              node {
-                id, name
-                address { city, country }
-              }
+              node { id, name, address { city, country } }
             }
           }
         }
