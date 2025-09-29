@@ -186,35 +186,69 @@ st.session_state.setdefault('last_update_results', {})
 
 def _process_one_product_for_price_sync(shopify_api, product_base_sku, all_variants_df, price_data_df, price_col, compare_col, rate_limiter):
     """
-    Tek bir ürünü baştan sona işleyen worker fonksiyonu. REST API ile güncelleme yapar.
+    GraphQL ile optimize edilmiş tek ürün işleme fonksiyonu.
+    Tek GraphQL call ile hem ürün hem varyantları al ve güncelle.
     """
     try:
-        variant_map = shopify_api.get_variant_ids_by_skus([product_base_sku], search_by_product_sku=True)
-        if not variant_map:
-            return {"status": "failed", "reason": f"Ürün Shopify'da bulunamadı: {product_base_sku}"}
-
-        product_id = next(iter(variant_map.values()))['product_id']
-        
-        # Ana ürünün hesaplanmış fiyatını bul
+        # İlk önce fiyat verisini kontrol et
         price_row = price_data_df.loc[price_data_df['MODEL KODU'] == product_base_sku]
         if price_row.empty:
-            return {"status": "skipped", "reason": f"Hesaplanmış fiyat listesinde ürün bulunamadı: {product_base_sku}"}
+            return {"status": "skipped", "reason": f"Fiyat bulunamadı: {product_base_sku}"}
         
         price_to_set = price_row.iloc[0][price_col]
         compare_price_to_set = price_row.iloc[0].get(compare_col)
 
-        # O ürüne ait tüm varyantlar için güncelleme verisini hazırla
+        # GraphQL ile ürün ve tüm varyantlarını al
+        query = """
+        query getProductWithVariants($query: String!) {
+            products(first: 1, query: $query) {
+                edges {
+                    node {
+                        id
+                        variants(first: 100) {
+                            edges {
+                                node {
+                                    id
+                                    sku
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        """
+        
+        rate_limiter.wait()
+        result = shopify_api.execute_graphql(query, {"query": f"sku:{product_base_sku}*"})
+        
+        product_edges = result.get("products", {}).get("edges", [])
+        if not product_edges:
+            return {"status": "failed", "reason": f"Shopify'da ürün bulunamadı: {product_base_sku}"}
+        
+        product = product_edges[0]['node']
+        product_id = product['id']
+        
+        # Base SKU ile başlayan varyantları filtrele ve updates hazırla
         updates = []
-        for variant_sku, ids in variant_map.items():
-            payload = {"id": ids['variant_gid'], "price": f"{price_to_set:.2f}"}
-            if compare_price_to_set is not None and pd.notna(compare_price_to_set):
-                payload["compareAtPrice"] = f"{compare_price_to_set:.2f}"
-            updates.append(payload)
+        for v_edge in product.get('variants', {}).get('edges', []):
+            variant = v_edge['node']
+            variant_sku = variant.get('sku', '')
+            
+            if variant_sku.startswith(product_base_sku):
+                payload = {
+                    "id": variant['id'],
+                    "price": f"{price_to_set:.2f}"
+                }
+                if compare_price_to_set is not None and pd.notna(compare_price_to_set):
+                    payload["compareAtPrice"] = f"{compare_price_to_set:.2f}"
+                updates.append(payload)
 
         if not updates:
             return {"status": "skipped", "reason": "Eşleşen varyant bulunamadı."}
 
-        # REST tabanlı güncelleme fonksiyonunu çağır
+        # GraphQL bulk mutation ile fiyatları güncelle
+        from operations.price_sync import update_prices_for_single_product
         return update_prices_for_single_product(shopify_api, product_id, updates, rate_limiter)
 
     except Exception as e:
