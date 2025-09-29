@@ -59,7 +59,14 @@ with st.expander("🔍 Sipariş Filtreleme ve Arama", expanded=True):
         start_datetime = datetime.combine(start_date, datetime.min.time()).isoformat()
         end_datetime = datetime.combine(end_date, datetime.max.time()).isoformat()
         with st.spinner("Shopify'dan detaylı sipariş verileri çekiliyor..."):
-            st.session_state['shopify_orders_display'] = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
+            try:
+                orders_result = shopify_api.get_orders_by_date_range(start_datetime, end_datetime)
+                st.session_state['shopify_orders_display'] = orders_result
+                st.success(f"✅ Başarıyla {len(orders_result) if orders_result else 0} sipariş getirildi!")
+            except Exception as e:
+                st.error(f"❌ Shopify siparişleri getirilirken hata oluştu: {str(e)}")
+                st.session_state['shopify_orders_display'] = None
+                st.code(f"Hata detayı: {str(e)}", language="text")
 
 # --- Sipariş Listesi ve Analiz ---
 if 'shopify_orders_display' in st.session_state:

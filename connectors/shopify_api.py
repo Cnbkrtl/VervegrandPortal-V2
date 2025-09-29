@@ -120,35 +120,62 @@ class ShopifyAPI:
 
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         all_orders = []
+        # Simplified query first - test basic order fields
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
             pageInfo { hasNextPage, endCursor }
             edges {
               node {
-                id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus, note
-                customer { firstName, lastName, email, phone, numberOfOrders }
+                id
+                name
+                createdAt
+                displayFinancialStatus
+                displayFulfillmentStatus
+                note
+                tags
+                customer { 
+                  id
+                  firstName
+                  lastName
+                  email
+                  phone
+                  numberOfOrders 
+                }
                 
-                currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
-                totalPriceSet { shopMoney { amount, currencyCode } }
-                originalTotalPriceSet { shopMoney { amount, currencyCode } }
-                totalShippingPriceSet { shopMoney { amount, currencyCode } }
-                totalTaxSet { shopMoney { amount, currencyCode } }
-                totalDiscountsSet { shopMoney { amount, currencyCode } }
+                currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+                totalPriceSet { shopMoney { amount currencyCode } }
+                originalTotalPriceSet { shopMoney { amount currencyCode } }
+                totalShippingPriceSet { shopMoney { amount currencyCode } }
+                totalTaxSet { shopMoney { amount currencyCode } }
+                totalDiscountsSet { shopMoney { amount currencyCode } }
 
                 lineItems(first: 50) {
                   nodes {
-                    title, quantity
-                    variant { sku, title }
-                    originalUnitPriceSet { shopMoney { amount, currencyCode } }
-                    discountedUnitPriceSet { shopMoney { amount, currencyCode } }
-                    totalDiscountSet { shopMoney { amount, currencyCode } }
+                    id
+                    title
+                    quantity
+                    variant { 
+                      id
+                      sku
+                      title 
+                    }
+                    originalUnitPriceSet { shopMoney { amount currencyCode } }
+                    discountedUnitPriceSet { shopMoney { amount currencyCode } }
                   }
                 }
                 
                 shippingAddress {
-                  name, address1, address2, city, province, provinceCode
-                  zip, country, countryCodeV2, phone
+                  name
+                  address1
+                  address2
+                  city
+                  province
+                  provinceCode
+                  zip
+                  country
+                  countryCodeV2
+                  phone
                 }
               }
             }
