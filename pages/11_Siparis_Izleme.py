@@ -1,4 +1,4 @@
-# pages/1_Siparis_Izleme.py (Nihai Düzeltme: Shopify Dökümanlarına Uygun Hesaplama)
+# pages/11_Siparis_Izleme.py (Nihai Düzeltme)
 
 import streamlit as st
 from datetime import datetime, timedelta
@@ -52,6 +52,9 @@ if 'shopify_orders_display' in st.session_state:
 
         for order in st.session_state['shopify_orders_display']:
             financial_status = order.get('displayFinancialStatus', 'Bilinmiyor')
+            fulfillment_status = order.get('displayFulfillmentStatus', 'Bilinmiyor')
+            status_colors = {'PAID': 'green', 'PENDING': 'orange', 'REFUNDED': 'gray', 'FULFILLED': 'blue', 'UNFULFILLED': 'orange'}
+            
             customer = order.get('customer') or {}
             customer_name = f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip()
             expander_title = f"Sipariş {order['name']} - Müşteri: {customer_name or 'Misafir'}"
@@ -59,60 +62,72 @@ if 'shopify_orders_display' in st.session_state:
             with st.container(border=True):
                 st.subheader(expander_title)
                 
-                line_items_data = []
-                total_discount_from_lines = 0.0
-                subtotal_from_lines = 0.0
-                currency_code = "TRY"
+                main_cols = st.columns([2.5, 1.2])
 
-                for item in order.get('lineItems', {}).get('nodes', []):
-                    quantity = item.get('quantity', 0)
+                with main_cols[0]: # Sol taraf
+                    st.markdown(f"**Ödeme:** <span style='background-color:{status_colors.get(financial_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{financial_status}</span> &nbsp;&nbsp; **Gönderim:** <span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 4px; border-radius: 5px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
+                    st.write("**Ürünler**")
                     
-                    # Orijinal (üstü çizili) birim fiyat
-                    original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    line_items_data = []
+                    for item in order.get('lineItems', {}).get('nodes', []):
+                        quantity = item.get('quantity', 0)
+                        currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
+                        original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                        
+                        line_items_data.append({
+                            "Ürün": item.get('title', 'N/A'),
+                            "SKU": (item.get('variant') or {}).get('sku', 'N/A'),
+                            "Detay": f"₺{original_price:.2f} x {quantity}",
+                            "İndirimli Fiyat": discounted_price,
+                            "Toplam": discounted_price * quantity
+                        })
                     
-                    # Müşterinin ödediği indirimli birim fiyat
-                    discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    df = pd.DataFrame(line_items_data)
+                    st.dataframe(df,
+                        column_config={
+                            "İndirimli Fiyat": st.column_config.NumberColumn(format="₺%.2f"),
+                            "Toplam": st.column_config.NumberColumn(format="₺%.2f")
+                        }, use_container_width=True, hide_index=True)
                     
-                    currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
+                    # Özet Tablosu
+                    subtotal = float(order.get('subtotalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    total_discount = float(order.get('totalDiscountsSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    tax = float(order.get('totalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
+                    total = float(order.get('totalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                     
-                    # Satır başına toplam indirimi, her bir indirim payını toplayarak buluyoruz
-                    line_item_discount = sum(float(alloc.get('allocatedAmountSet', {}).get('shopMoney', {}).get('amount', 0.0)) for alloc in item.get('discountAllocations', []))
+                    # Eğer sipariş iade edilmişse, ara toplamı satırlardan hesapla
+                    if financial_status == 'REFUNDED':
+                        subtotal = sum(d['Miktar'] * d['İndirimli Fiyat'] for d in line_items_data) + total_discount
 
-                    line_total = discounted_price * quantity
+                    st.markdown(f"""
+                    <div style="text-align: right; line-height: 1.8;">
+                        Ara Toplam: <b>{subtotal:.2f} {currency_code}</b><br>
+                        İndirimler: <b style="color: #28a745;">-{total_discount:.2f} {currency_code}</b><br>
+                        Kargo: <b>{shipping:.2f} {currency_code}</b><br>
+                        Vergiler: <b>{tax:.2f} {currency_code}</b><br>
+                        <hr style="margin: 4px 0;">
+                        <h4>Toplam: <b>{total:.2f} {currency_code}</b></h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with main_cols[1]: # Sağ taraf
+                    st.markdown("**Notlar**")
+                    st.info(order.get('note') or "Müşteriden not yok.")
                     
-                    subtotal_from_lines += original_price * quantity
-                    total_discount_from_lines += line_item_discount
+                    st.markdown("**Müşteri**")
+                    st.write(f"**{customer_name or 'Misafir'}** ({customer.get('numberOfOrders', 0)} sipariş)")
+                    st.write(f"📧 {customer.get('email', 'N/A')}")
+                    st.write(f"📞 {customer.get('phone', 'N/A')}")
 
-                    line_items_data.append({
-                        "Ürün": item.get('title', 'N/A'),
-                        "Detay": f"₺{original_price:.2f} x {quantity}",
-                        "İndirimli Fiyat": discounted_price,
-                        "Toplam": line_total
-                    })
-
-                df = pd.DataFrame(line_items_data)
-                
-                st.dataframe(
-                    df,
-                    column_config={
-                        "İndirimli Fiyat": st.column_config.NumberColumn(format=f"₺%.2f"),
-                        "Toplam": st.column_config.NumberColumn(format=f"₺%.2f")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-                
-                shipping = float(order.get('totalShippingPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                tax = float(order.get('totalTaxSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                total = float(order.get('totalPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-
-                st.markdown(f"""
-                <div style="text-align: right; line-height: 1.8;">
-                    Ara Toplam: <b>{subtotal_from_lines:.2f} {currency_code}</b><br>
-                    İndirimler: <b style="color: #28a745;">-{total_discount_from_lines:.2f} {currency_code}</b><br>
-                    Kargo: <b>{shipping:.2f} {currency_code}</b><br>
-                    Vergiler: <b>{tax:.2f} {currency_code}</b><br>
-                    <hr style="margin: 4px 0;">
-                    <h4>Toplam: <b>{total:.2f} {currency_code}</b></h4>
-                </div>
-                """, unsafe_allow_html=True)
+                    st.markdown("**Kargo Adresi**")
+                    shipping_addr = order.get('shippingAddress') or {}
+                    st.text(f"""
+{shipping_addr.get('name', '')}
+{shipping_addr.get('address1', '')}
+{shipping_addr.get('address2', '') or ''}
+{shipping_addr.get('city', '')}, {shipping_addr.get('provinceCode', '')} {shipping_addr.get('zip', '')}
+{shipping_addr.get('country', '')}
+                    """)
+                st.write("")
