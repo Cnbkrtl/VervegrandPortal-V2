@@ -123,99 +123,6 @@ class ShopifyAPI:
                  raise e
         
         raise Exception(f"API isteği {max_retries} denemenin ardından başarısız oldu.")
-    
-    def get_orders_by_date_range(self, start_date_iso, end_date_iso):
-        """
-        DÜZELTİLDİ: Shopify dökümanlarına göre en doğru fiyat ve indirim alanlarını çeker.
-        """
-        all_orders = []
-        query = """
-        query getOrders($cursor: String, $filter_query: String!) {
-          orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
-            pageInfo { hasNextPage, endCursor }
-            edges {
-              node {
-                id, name, createdAt, displayFinancialStatus, displayFulfillmentStatus, note
-                customer { firstName, lastName, email, phone, numberOfOrders }
-                shippingAddress { name, address1, address2, city, provinceCode, zip, country, phone }
-                
-                subtotalPriceSet { shopMoney { amount, currencyCode } }
-                totalShippingPriceSet { shopMoney { amount, currencyCode } }
-                totalTaxSet { shopMoney { amount, currencyCode } }
-                totalPriceSet { shopMoney { amount, currencyCode } }
-                
-                discountApplications(first: 10) {
-                  nodes {
-                    value {
-                      ... on MoneyV2 { amount }
-                      ... on PricingPercentageValue { percentage }
-                    }
-                    title
-                  }
-                }
-
-                lineItems(first: 50) {
-                  nodes {
-                    title, quantity
-                    variant { sku, title }
-                    originalUnitPriceSet { shopMoney { amount, currencyCode } }
-                    discountedUnitPriceSet { shopMoney { amount, currencyCode } }
-                    discountAllocations {
-                      allocatedAmountSet { shopMoney { amount, currencyCode } }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        """
-        variables = {"cursor": None, "filter_query": f"created_at:>='{start_date_iso}' AND created_at:<='{end_date_iso}'"}
-        
-        while True:
-            data = self.execute_graphql(query, variables)
-            if not data: break
-            orders_data = data.get("orders", {})
-            for edge in orders_data.get("edges", []):
-                all_orders.append(edge["node"])
-            
-            page_info = orders_data.get("pageInfo", {})
-            if not page_info.get("hasNextPage"): break
-            
-            variables["cursor"] = page_info["endCursor"]
-            time.sleep(1) # Rate limit için bekleme
-
-        return all_orders
-        
-    def get_locations(self):
-        """
-        YENİ FONKSİYON: Mağazadaki tüm aktif envanter konumlarını (locations) çeker.
-        """
-        query = """
-        query {
-          locations(first: 25, query:"status:active") {
-            edges {
-              node {
-                id
-                name
-                address {
-                  city
-                  country
-                }
-              }
-            }
-          }
-        }
-        """
-        try:
-            result = self.execute_graphql(query)
-            locations_edges = result.get("locations", {}).get("edges", [])
-            locations = [edge['node'] for edge in locations_edges]
-            logging.info(f"{len(locations)} adet aktif Shopify lokasyonu bulundu.")
-            return locations
-        except Exception as e:
-            logging.error(f"Shopify lokasyonları çekilirken hata: {e}")
-            return []
 
     def get_all_collections(self, progress_callback=None):
         all_collections = []
@@ -618,7 +525,6 @@ class ShopifyAPI:
     def create_product_sortable_metafield_definition(self, method='modern'):
         """
         Metafield tanımını, seçilen metoda (modern, legacy, hybrid) göre oluşturur.
-        Shopify'ın güncel API yapısına uygun olarak düzenlenmiştir.
         """
         logging.info(f"API üzerinden metafield tanımı oluşturuluyor (Metot: {method}, API Versiyon: {self.api_version})...")
 
@@ -628,8 +534,6 @@ class ShopifyAPI:
             createdDefinition {
               id
               name
-              key
-              namespace
             }
             userErrors {
               field
@@ -640,182 +544,42 @@ class ShopifyAPI:
         }
         """
 
-        # Temel tanım - tüm metodlar için ortak
+        # Temel tanım
         base_definition = {
             "name": "Toplam Stok Siralamasi",
-            "namespace": "custom_sort", 
+            "namespace": "custom_sort",
             "key": "total_stock",
             "type": "number_integer",
             "ownerType": "PRODUCT",
-            "description": "Koleksiyon siralamasinda kullanilacak toplam stok sayisi"
         }
 
-        # Farklı metodlara göre sortable capability'sini ekleme
+        # Seçilen metoda göre tanımı dinamik olarak oluştur
         if method == 'modern':
-            # Yeni API yapısında capabilities ayrı bir mutation ile yapılıyor olabilir
-            # Şimdilik sadece temel tanım
-            pass
+            base_definition["capabilities"] = {"sortable": True}
         elif method == 'legacy':
-            # Eski yöntem - ana seviyede sortable
             base_definition["sortable"] = True
         elif method == 'hybrid':
-            # İkisini de deneme (eğer API destekliyorsa)
+            base_definition["capabilities"] = {"sortable": True}
             base_definition["sortable"] = True
-
+        
         variables = {"definition": base_definition}
 
         try:
             result = self.execute_graphql(mutation, variables)
             errors = result.get('metafieldDefinitionCreate', {}).get('userErrors', [])
-        
             if errors:
-                # TAKEN hatası - zaten var demek
                 if any(error.get('code') == 'TAKEN' for error in errors):
-                    # Var olan tanımı kontrol et ve gerekirse güncelle
-                    return self._handle_existing_metafield_definition()
-            
-                error_details = [f"{err.get('field', 'unknown')}: {err.get('message', 'unknown')}" for err in errors]
-                return {'success': False, 'message': f"Metafield tanımı hatası: {'; '.join(error_details)}"}
+                    return {'success': True, 'message': 'Metafield tanımı zaten mevcut.'}
+                return {'success': False, 'message': f"Metafield tanımı hatası: {errors}"}
 
             created_definition = result.get('metafieldDefinitionCreate', {}).get('createdDefinition')
             if created_definition:
-                # Eğer modern metod ile oluşturduk, şimdi sortable capability'sini ayrıca ekle
-                if method == 'modern':
-                    return self._add_sortable_capability(created_definition['id'])
-            
-                return {'success': True, 'message': f"Tanım başarıyla oluşturuldu: {created_definition.get('name')}"}
-        
+                return {'success': True, 'message': f"✅ Tanım başarıyla oluşturuldu: {created_definition.get('name')}"}
             return {'success': False, 'message': 'Tanım oluşturuldu ancak sonuç alınamadı.'}
 
         except Exception as e:
             return {'success': False, 'message': f"Kritik API hatası: {e}"}
         
-    def _handle_existing_metafield_definition(self):
-        """Var olan metafield tanımını kontrol eder ve gerekirse sortable yapar"""
-        logging.info("Var olan metafield tanımı kontrol ediliyor...")
-    
-        # Mevcut tanımı getir
-        query = """
-        query {
-          metafieldDefinitions(first: 50, ownerType: PRODUCT) {
-            edges {
-              node {
-                id
-                key
-                namespace
-                name
-              }
-            }
-          }
-        }
-        """
-    
-        try:
-            result = self.execute_graphql(query)
-            definitions = result.get('metafieldDefinitions', {}).get('edges', [])
-        
-            for edge in definitions:
-                node = edge.get('node', {})
-                if node.get('namespace') == 'custom_sort' and node.get('key') == 'total_stock':
-                    # Bulundu - sortable capability'sini kontrol et ve gerekirse ekle
-                    return self._add_sortable_capability(node['id'])
-        
-            return {'success': False, 'message': 'Mevcut metafield tanımı bulunamadı'}
-        
-        except Exception as e:
-            return {'success': True, 'message': f'Metafield zaten mevcut (Detay kontrolü başarısız: {e})'}
-
-    def _add_sortable_capability(self, definition_id):
-        """Metafield tanımına sortable capability ekler"""
-        logging.info(f"Metafield tanımına sortable capability ekleniyor: {definition_id}")
-    
-        # Önce mevcut durumu kontrol et
-        query = """
-        query metafieldDefinition($id: ID!) {
-          metafieldDefinition(id: $id) {
-            id
-            name
-          }
-        }
-        """
-    
-        try:
-            # Şimdilik basit bir başarı döndür - sortable capability API'si değişmiş olabilir
-            # Gerçek implementasyon için Shopify'ın en güncel dokumentasyonunu kontrol etmek gerekiyor
-            logging.info("Sortable capability ekleme işlemi atlandı (API değişikliği)")
-            return {
-                'success': True, 
-                'message': 'Metafield tanımı mevcut. Sortable özelliği için Shopify Admin panelinden manuel kontrol gerekebilir.'
-            }
-        
-        except Exception as e:
-            return {
-                'success': True, 
-                'message': f'Metafield tanımı mevcut ancak capability eklenemedi: {e}'
-            }
-        
-    def get_metafield_definitions(self):
-        """
-        Shopify'daki tüm PRODUCT metafield tanımlarını getirir.
-        """
-        logging.info("Shopify'dan metafield tanımları sorgulanıyor...")
-    
-        query = """
-        query getMetafieldDefinitions($cursor: String) {
-            metafieldDefinitions(first: 50, after: $cursor, ownerType: PRODUCT) {
-                pageInfo {
-                    hasNextPage
-                    endCursor
-                }
-                edges {
-                    node {
-                        id
-                        name
-                        namespace
-                        key
-                        description
-                        type {
-                            name
-                        }
-                        ownerType
-                        visibleToStorefrontApi
-                    }
-                }
-            }
-        }
-        """
-    
-        all_definitions = []
-        variables = {"cursor": None}
-    
-        try:
-            while True:
-                result = self.execute_graphql(query, variables)
-                definitions_data = result.get("metafieldDefinitions", {})
-            
-                for edge in definitions_data.get("edges", []):
-                    node = edge.get("node", {})
-                    # Type objesinden name'i çıkar
-                    type_info = node.get("type", {})
-                    if isinstance(type_info, dict):
-                        node["type"] = type_info.get("name", "unknown")
-                
-                    all_definitions.append(node)
-            
-                page_info = definitions_data.get("pageInfo", {})
-                if not page_info.get("hasNextPage"):
-                    break
-                
-                variables["cursor"] = page_info["endCursor"]
-            
-            logging.info(f"Toplam {len(all_definitions)} metafield tanımı bulundu.")
-            return {'success': True, 'data': all_definitions}
-        
-        except Exception as e:
-            error_msg = f"Metafield tanımları sorgulanırken hata: {e}"
-            logging.error(error_msg)
-            return {'success': False, 'message': error_msg}
-
     def get_collection_available_sort_keys(self, collection_gid):
         """
         Belirli bir koleksiyon için mevcut olan sıralama anahtarlarını
