@@ -79,36 +79,31 @@ class ShopifyAPI:
             raise e
 
     def execute_graphql(self, query, variables=None):
-        """
-        GraphQL sorgusunu çalıştırır ve hız limitine takıldığında
-        otomatik olarak bekleyip tekrar dener (exponential backoff).
-        """
         payload = {'query': query, 'variables': variables or {}}
-        max_retries = 8  # Daha fazla deneme
-        retry_delay = 2  # Başlangıç bekleme süresi
-
+        max_retries = 8
+        retry_delay = 2
         for attempt in range(max_retries):
             try:
-                response_data = self._make_request('POST', self.graphql_url, data=payload, is_graphql=True)
+                response = requests.post(self.graphql_url, headers=self.headers, json=payload, timeout=90)
+                response.raise_for_status()
+                response_data = response.json()
                 
                 if "errors" in response_data:
                     is_throttled = any(
                         err.get('extensions', {}).get('code') == 'THROTTLED' 
-                        for err in response_data["errors"]
+                        for err in response_data.get("errors", [])
                     )
-                    
                     if is_throttled and attempt < max_retries - 1:
-                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                        wait_time = retry_delay * (2 ** attempt)
                         logging.warning(f"GraphQL Throttled! {wait_time} saniye beklenip tekrar denenecek... (Deneme {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     
-                    error_messages = [err.get('message', 'Bilinmeyen GraphQL hatası') for err in response_data["errors"]]
+                    error_messages = [err.get('message', 'Bilinmeyen GraphQL hatası') for err in response_data.get("errors", [])]
                     logging.error(f"GraphQL sorgusu hata verdi: {json.dumps(response_data['errors'], indent=2)}")
                     raise Exception(f"GraphQL Error: {', '.join(error_messages)}")
 
                 return response_data.get("data", {})
-
             except requests.exceptions.HTTPError as e:
                 if e.response and e.response.status_code == 429 and attempt < max_retries - 1:
                     wait_time = retry_delay * (2 ** attempt)
@@ -121,14 +116,14 @@ class ShopifyAPI:
             except requests.exceptions.RequestException as e:
                  logging.error(f"API bağlantı hatası: {e}. Bu hata için tekrar deneme yapılmıyor.")
                  raise e
-        
         raise Exception(f"API isteği {max_retries} denemenin ardından başarısız oldu.")
-    
+
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         """
         DÜZELTİLDİ: Shopify dökümanlarına göre en doğru fiyat ve indirim alanlarını çeker.
         """
         all_orders = []
+        # --- DiscountApplication alanı dökümantasyona göre düzeltildi ---
         query = """
         query getOrders($cursor: String, $filter_query: String!) {
           orders(first: 10, after: $cursor, query: $filter_query, sortKey: CREATED_AT, reverse: true) {
@@ -150,7 +145,11 @@ class ShopifyAPI:
                       ... on MoneyV2 { amount }
                       ... on PricingPercentageValue { percentage }
                     }
-                    title
+                    # --- KESİN DÜZELTME BURADA ---
+                    ... on DiscountCodeApplication { code } # 'title' yerine 'code'
+                    ... on AutomaticDiscountApplication { title }
+                    ... on ManualDiscountApplication { title }
+                    ... on ScriptDiscountApplication { title }
                   }
                 }
 
@@ -183,25 +182,18 @@ class ShopifyAPI:
             if not page_info.get("hasNextPage"): break
             
             variables["cursor"] = page_info["endCursor"]
-            time.sleep(1) # Rate limit için bekleme
+            time.sleep(1)
 
         return all_orders
         
     def get_locations(self):
-        """
-        YENİ FONKSİYON: Mağazadaki tüm aktif envanter konumlarını (locations) çeker.
-        """
         query = """
         query {
           locations(first: 25, query:"status:active") {
             edges {
               node {
-                id
-                name
-                address {
-                  city
-                  country
-                }
+                id, name
+                address { city, country }
               }
             }
           }
@@ -210,9 +202,7 @@ class ShopifyAPI:
         try:
             result = self.execute_graphql(query)
             locations_edges = result.get("locations", {}).get("edges", [])
-            locations = [edge['node'] for edge in locations_edges]
-            logging.info(f"{len(locations)} adet aktif Shopify lokasyonu bulundu.")
-            return locations
+            return [edge['node'] for edge in locations_edges]
         except Exception as e:
             logging.error(f"Shopify lokasyonları çekilirken hata: {e}")
             return []
