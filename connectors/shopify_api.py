@@ -348,28 +348,75 @@ class ShopifyAPI:
         return self.location_id
 
     def load_all_products_for_cache(self, progress_callback=None):
+        """GraphQL ile tüm ürünleri önbelleğe al"""
         total_loaded = 0
-        endpoint = f'{self.store_url}/admin/api/2024-10/products.json?limit=50&fields=id,title,variants'  # Limit düşürüldü
         
-        while endpoint:
-            if progress_callback: progress_callback({'message': f"Shopify ürünleri önbelleğe alınıyor... {total_loaded} ürün bulundu."})
+        query = """
+        query getProductsForCache($cursor: String) {
+          products(first: 50, after: $cursor) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            edges {
+              node {
+                id
+                title
+                variants(first: 100) {
+                  edges {
+                    node {
+                      sku
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        
+        variables = {"cursor": None}
+        
+        while True:
+            if progress_callback: 
+                progress_callback({'message': f"Shopify ürünleri önbelleğe alınıyor... {total_loaded} ürün bulundu."})
             
-            response = requests.get(endpoint, headers=self.headers)
-            response.raise_for_status()
-            products = response.json().get('products', [])
-            
-            for product in products:
-                product_data = {'id': product['id'], 'gid': f"gid://shopify/Product/{product['id']}"}
-                if title := product.get('title'): self.product_cache[f"title:{title.strip()}"] = product_data
-                for variant in product.get('variants', []):
-                    if sku := variant.get('sku'): self.product_cache[f"sku:{sku.strip()}"] = product_data
-            
-            total_loaded += len(products)
-            link_header = response.headers.get('Link', '')
-            endpoint = next((link['url'] for link in requests.utils.parse_header_links(link_header) if link.get('rel') == 'next'), None)
-            
-            # REST API için de rate limit koruması
-            time.sleep(1)
+            try:
+                data = self.execute_graphql(query, variables)
+                products_data = data.get("products", {})
+                
+                for edge in products_data.get("edges", []):
+                    product = edge["node"]
+                    # GID'den sadece ID'yi çıkar
+                    product_id = product["id"].split("/")[-1]
+                    product_data = {
+                        'id': int(product_id), 
+                        'gid': product["id"]
+                    }
+                    
+                    # Title ile önbelleğe al
+                    if title := product.get('title'): 
+                        self.product_cache[f"title:{title.strip()}"] = product_data
+                    
+                    # Variants ile önbelleğe al
+                    for variant_edge in product.get('variants', {}).get('edges', []):
+                        variant = variant_edge['node']
+                        if sku := variant.get('sku'): 
+                            self.product_cache[f"sku:{sku.strip()}"] = product_data
+                
+                total_loaded += len(products_data.get("edges", []))
+                
+                # Sayfalama kontrolü
+                page_info = products_data.get("pageInfo", {})
+                if not page_info.get("hasNextPage"):
+                    break
+                
+                variables["cursor"] = page_info["endCursor"]
+                time.sleep(0.5)  # Rate limit koruması
+                
+            except Exception as e:
+                logging.error(f"Ürünler önbelleğe alınırken hata: {e}")
+                break
         
         logging.info(f"Shopify'dan toplam {total_loaded} ürün önbelleğe alındı.")
         return total_loaded

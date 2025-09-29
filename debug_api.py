@@ -22,20 +22,86 @@ def get_shopify_product_structure():
             print("❌ Shopify credentials not found in config")
             return None
         
-        # İlk ürünü çek
+        # GraphQL ile ilk ürünü çek
         headers = {
             'X-Shopify-Access-Token': access_token,
             'Content-Type': 'application/json'
         }
         
-        url = f"{store_url}/admin/api/2023-10/products.json?limit=1"
-        response = requests.get(url, headers=headers)
+        # GraphQL endpoint kullan
+        url = f"{store_url}/admin/api/2024-10/graphql.json"
+        
+        # GraphQL sorgusu
+        query = """
+        query getFirstProduct {
+          products(first: 1) {
+            edges {
+              node {
+                id
+                title
+                handle
+                description
+                status
+                vendor
+                productType
+                createdAt
+                updatedAt
+                totalInventory
+                tags
+                variants(first: 10) {
+                  edges {
+                    node {
+                      id
+                      title
+                      sku
+                      inventoryQuantity
+                      price
+                      compareAtPrice
+                      weight
+                      weightUnit
+                      barcode
+                      position
+                      selectedOptions {
+                        name
+                        value
+                      }
+                    }
+                  }
+                }
+                images(first: 10) {
+                  edges {
+                    node {
+                      id
+                      url
+                      altText
+                      width
+                      height
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code == 200:
             data = response.json()
-            if data.get('products'):
-                product = data['products'][0]
-                print("🏪 SHOPIFY PRODUCT STRUCTURE:")
+            
+            # GraphQL hata kontrolü
+            if data.get('errors'):
+                print(f"❌ GraphQL errors: {data['errors']}")
+                return None
+                
+            products_data = data.get('data', {}).get('products', {})
+            edges = products_data.get('edges', [])
+            
+            if edges:
+                product = edges[0]['node']
+                print("🏪 SHOPIFY PRODUCT STRUCTURE (GraphQL):")
                 print("="*50)
                 print(json.dumps(product, indent=2))
                 print("="*50)

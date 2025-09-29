@@ -21,17 +21,85 @@ def analyze_shopify_product():
         'Content-Type': 'application/json'
     }
     
-    # İlk ürünü al
-    url = f"https://{credentials['shopify_store']}/admin/api/2023-10/products.json?limit=1"
+    # GraphQL ile ilk ürünü al
+    url = f"https://{credentials['shopify_store']}/admin/api/2024-10/graphql.json"
+    
+    query = """
+    query getFirstProduct {
+      products(first: 1) {
+        edges {
+          node {
+            id
+            title
+            handle
+            description
+            status
+            vendor
+            productType
+            createdAt
+            updatedAt
+            totalInventory
+            tags
+            variants(first: 50) {
+              edges {
+                node {
+                  id
+                  title
+                  sku
+                  inventoryQuantity
+                  price
+                  compareAtPrice
+                  weight
+                  weightUnit
+                  barcode
+                  position
+                  selectedOptions {
+                    name
+                    value
+                  }
+                  inventoryItem {
+                    id
+                    tracked
+                    requiresShipping
+                  }
+                }
+              }
+            }
+            images(first: 50) {
+              edges {
+                node {
+                  id
+                  url
+                  altText
+                  width
+                  height
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
     
     try:
-        response = requests.get(url, headers=headers)
+        payload = {"query": query}
+        response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code == 200:
             data = response.json()
-            if data.get('products'):
-                product = data['products'][0]
-                print("🔍 SHOPIFY ÜRÜN YAPISI:")
+            
+            # GraphQL hata kontrolü
+            if data.get('errors'):
+                print(f"❌ GraphQL errors: {data['errors']}")
+                return None
+                
+            products_data = data.get('data', {}).get('products', {})
+            edges = products_data.get('edges', [])
+            
+            if edges:
+                product = edges[0]['node']
+                print("🔍 SHOPIFY ÜRÜN YAPISI (GraphQL):")
                 print("=" * 80)
                 print(json.dumps(product, indent=2, ensure_ascii=False))
                 print("=" * 80)
@@ -40,26 +108,34 @@ def analyze_shopify_product():
                 print("\n📋 SHOPIFY ANA ALANLAR:")
                 for key in product.keys():
                     value_type = type(product[key]).__name__
-                    if isinstance(product[key], list) and product[key]:
+                    if isinstance(product[key], dict) and 'edges' in product[key]:
+                        # GraphQL edge yapısı
+                        edges = product[key]['edges']
+                        print(f"  {key}: GraphQL Connection (count: {len(edges)})")
+                    elif isinstance(product[key], list) and product[key]:
                         item_type = type(product[key][0]).__name__
                         print(f"  {key}: {value_type}[{item_type}] (count: {len(product[key])})")
                     else:
                         print(f"  {key}: {value_type}")
                 
                 # Variants yapısını detaylandır
-                if product.get('variants'):
-                    variant = product['variants'][0]
+                if product.get('variants', {}).get('edges'):
+                    variant = product['variants']['edges'][0]['node']
                     print("\n🎯 SHOPIFY VARIANT YAPISI:")
                     for key in variant.keys():
                         value_type = type(variant[key]).__name__
-                        print(f"  {key}: {value_type}")
+                        if isinstance(variant[key], list) and variant[key]:
+                            item_type = type(variant[key][0]).__name__
+                            print(f"  {key}: {value_type}[{item_type}] (count: {len(variant[key])})")
+                        else:
+                            print(f"  {key}: {value_type}")
                 
                 return product
             else:
                 print("❌ Shopify'da ürün bulunamadı!")
                 return None
         else:
-            print(f"❌ Shopify API hatası: {response.status_code} - {response.text}")
+            print(f"❌ Shopify GraphQL API hatası: {response.status_code} - {response.text}")
             return None
             
     except Exception as e:
@@ -185,7 +261,7 @@ def compare_structures(shopify_product, sentos_product):
             print("  " + ", ".join(found_fields))
 
 def create_minimal_shopify_product():
-    """En minimal Shopify ürün oluşturma denemesi"""
+    """En minimal Shopify ürün oluşturma denemesi - GraphQL ile"""
     
     credentials = config_manager.load_all_keys()
     
@@ -198,75 +274,130 @@ def create_minimal_shopify_product():
         'Content-Type': 'application/json'
     }
     
-    url = f"https://{credentials['shopify_store']}/admin/api/2023-10/products.json"
+    url = f"https://{credentials['shopify_store']}/admin/api/2024-10/graphql.json"
     
-    # Farklı minimal kombinasyonları test et
+    # GraphQL mutation ile farklı minimal kombinasyonları test et
     test_cases = [
         {
             'name': 'Sadece title',
-            'payload': {
-                'product': {
-                    'title': 'Test Product - Only Title'
-                }
+            'input': {
+                'title': 'Test Product - Only Title'
             }
         },
         {
             'name': 'Title + vendor',
-            'payload': {
-                'product': {
-                    'title': 'Test Product - Title + Vendor',
-                    'vendor': 'Test Vendor'
-                }
+            'input': {
+                'title': 'Test Product - Title + Vendor',
+                'vendor': 'Test Vendor'
             }
         },
         {
             'name': 'Title + product_type',
-            'payload': {
-                'product': {
-                    'title': 'Test Product - Title + Type',
-                    'product_type': 'Test Type'
-                }
+            'input': {
+                'title': 'Test Product - Title + Type',
+                'productType': 'Test Type'
             }
         },
         {
             'name': 'Title + vendor + product_type',
-            'payload': {
-                'product': {
-                    'title': 'Test Product - Complete',
-                    'vendor': 'Test Vendor',
-                    'product_type': 'Test Type'
-                }
+            'input': {
+                'title': 'Test Product - Complete',
+                'vendor': 'Test Vendor',
+                'productType': 'Test Type'
             }
         },
         {
             'name': 'Title + status',
-            'payload': {
-                'product': {
-                    'title': 'Test Product - With Status',
-                    'status': 'draft'
-                }
+            'input': {
+                'title': 'Test Product - With Status',
+                'status': 'DRAFT'
             }
         }
     ]
     
+    # GraphQL mutation
+    mutation = """
+    mutation productCreate($input: ProductInput!) {
+      productCreate(input: $input) {
+        product {
+          id
+          title
+          vendor
+          productType
+          status
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+    
     for test_case in test_cases:
         print(f"\n🧪 TEST: {test_case['name']}")
-        print(f"📦 Payload: {json.dumps(test_case['payload'], indent=2)}")
+        print(f"📦 Input: {json.dumps(test_case['input'], indent=2)}")
         
         try:
-            response = requests.post(url, headers=headers, json=test_case['payload'])
+            payload = {
+                "query": mutation,
+                "variables": {
+                    "input": test_case['input']
+                }
+            }
             
-            if response.status_code == 201:
-                created_product = response.json().get('product', {})
-                print(f"✅ BAŞARILI! Product ID: {created_product.get('id')}")
+            response = requests.post(url, headers=headers, json=payload)
+            
+            if response.status_code == 200:
+                data = response.json()
                 
-                # Oluşan ürünü sil (test için)
-                delete_url = f"https://{credentials['shopify_store']}/admin/api/2023-10/products/{created_product['id']}.json"
-                delete_response = requests.delete(delete_url, headers=headers)
-                if delete_response.status_code == 200:
-                    print("🗑️ Test ürünü silindi")
+                # GraphQL hata kontrolü
+                if data.get('errors'):
+                    print(f"❌ GraphQL errors: {data['errors']}")
+                    continue
                 
-                return test_case['payload']['product']
+                product_create = data.get('data', {}).get('productCreate', {})
+                user_errors = product_create.get('userErrors', [])
+                
+                if user_errors:
+                    print(f"❌ User errors: {user_errors}")
+                    continue
+                
+                created_product = product_create.get('product', {})
+                if created_product:
+                    print(f"✅ BAŞARILI! Product ID: {created_product.get('id')}")
+                    
+                    # Oluşan ürünü sil (test için) - GraphQL mutation ile
+                    delete_mutation = """
+                    mutation productDelete($input: ProductDeleteInput!) {
+                      productDelete(input: $input) {
+                        deletedProductId
+                        userErrors {
+                          field
+                          message
+                        }
+                      }
+                    }
+                    """
+                    
+                    delete_payload = {
+                        "query": delete_mutation,
+                        "variables": {
+                            "input": {
+                                "id": created_product['id']
+                            }
+                        }
+                    }
+                    
+                    delete_response = requests.post(url, headers=headers, json=delete_payload)
+                    if delete_response.status_code == 200:
+                        delete_data = delete_response.json()
+                        if not delete_data.get('errors') and not delete_data.get('data', {}).get('productDelete', {}).get('userErrors'):
+                            print("🗑️ Test ürünü silindi")
+                    
+                    return test_case['input']
+                else:
+                    print("❌ Ürün oluşturulamadı")
             else:
                 print(f"❌ BAŞARISIZ: {response.status_code}")
                 print(f"📋 Response: {response.text}")
