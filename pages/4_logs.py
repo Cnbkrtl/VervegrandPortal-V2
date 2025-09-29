@@ -1,331 +1,528 @@
-# pages/4_logs.py - Aktif Log Sistemi
+# pages/4_logs.py - Gelişmiş Log ve Monitoring Sistemi
 
 import streamlit as st
 import pandas as pd
 import json
+import sqlite3
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from operations.log_manager import log_manager
-import config_manager
+from plotly.subplots import make_subplots
+import os
+import sys
+import time
+import io
+import csv
+
+# Projenin ana dizinini Python'un arama yoluna ekle
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+try:
+    from operations.log_manager import LogManager, log_manager
+    LOG_MANAGER_AVAILABLE = True
+except ImportError:
+    LOG_MANAGER_AVAILABLE = False
+
+# Alternatif log source'ları
+def get_sync_history_logs():
+    """Sync history JSON'dan log verilerini çıkar"""
+    logs = []
+    try:
+        sync_file = os.path.join(project_root, 'sync_history.json')
+        if os.path.exists(sync_file):
+            with open(sync_file, 'r', encoding='utf-8') as f:
+                sync_history = json.load(f)
+            
+            for i, sync in enumerate(sync_history):
+                logs.append({
+                    'id': i + 1,
+                    'timestamp': sync.get('timestamp'),
+                    'log_type': 'sync',
+                    'status': 'completed' if sync.get('stats', {}).get('failed', 0) == 0 else 'partial',
+                    'source': 'system',
+                    'sync_mode': 'auto',
+                    'processed': sync.get('stats', {}).get('processed', 0),
+                    'created': sync.get('stats', {}).get('created', 0),
+                    'updated': sync.get('stats', {}).get('updated', 0),
+                    'failed': sync.get('stats', {}).get('failed', 0),
+                    'skipped': sync.get('stats', {}).get('skipped', 0),
+                    'details': json.dumps(sync.get('details', [])),
+                    'duration': None,
+                    'error_message': None
+                })
+    except Exception as e:
+        st.error(f"Sync history yüklenirken hata: {e}")
+    
+    return logs
+
+def get_system_logs():
+    """Sistem loglarını çek"""
+    logs = []
+    try:
+        log_dir = os.path.join(project_root, 'logs')
+        if os.path.exists(log_dir):
+            # SQLite veritabanı varsa onu kontrol et
+            db_path = os.path.join(log_dir, 'sync_logs.db')
+            if os.path.exists(db_path):
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.execute("""
+                        SELECT id, timestamp, log_type, status, source, sync_mode,
+                               processed, created, updated, failed, skipped, 
+                               duration, error_message, details
+                        FROM sync_logs 
+                        ORDER BY timestamp DESC 
+                        LIMIT 1000
+                    """)
+                    
+                    columns = [desc[0] for desc in cursor.description]
+                    for row in cursor.fetchall():
+                        logs.append(dict(zip(columns, row)))
+    except Exception as e:
+        st.error(f"Sistem logları yüklenirken hata: {e}")
+    
+    return logs
 
 def load_css():
     try:
-        with open("style.css") as f:
+        with open(os.path.join(project_root, "style.css")) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
         pass
 
+# Giriş kontrolü
 if not st.session_state.get("authentication_status"):
     st.error("Lütfen bu sayfaya erişmek için giriş yapın.")
     st.stop()
 
 load_css()
 
+# Page config
+st.set_page_config(page_title="Logs & Monitoring", layout="wide")
+
 st.markdown("""
 <div class="main-header">
-    <h1>📝 Loglar ve Raporlar</h1>
-    <p>Tüm senkronizasyon işlemleri, fiyat güncellemeleri ve sistem logları</p>
+    <h1>📊 Gelişmiş Log ve Monitoring Sistemi</h1>
+    <p>Kapsamlı sistem izleme, log analizi ve performans metrikleri</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar filters
+# Sidebar - Gelişmiş Filtreler
 with st.sidebar:
-    st.header("🔍 Filtreler")
+    st.header("� Gelişmiş Filtreler")
     
-    # Date range
-    date_range = st.selectbox(
+    # Veri kaynağı seçimi
+    data_source = st.selectbox(
+        "Veri Kaynağı",
+        ["SQLite Database", "Sync History JSON", "Kombine Görünüm"],
+        index=2
+    )
+    
+    # Zaman aralığı
+    time_range = st.selectbox(
         "Zaman Aralığı",
-        ["Son 24 Saat", "Son 7 Gün", "Son 30 Gün", "Tümü"],
-        index=1
+        ["Son 1 Saat", "Son 6 Saat", "Son 24 Saat", "Son 7 Gün", "Son 30 Gün", "Tümü"],
+        index=3
     )
     
-    # Log type filter
-    log_type_filter = st.selectbox(
-        "Log Tipi",
-        ["Tümü", "Senkronizasyon", "Fiyat Güncelleme", "Hatalar", "Sistem"],
+    # Log seviyesi
+    log_level = st.selectbox(
+        "Log Seviyesi",
+        ["Tümü", "Kritik Hatalar", "Uyarılar", "Bilgi", "Debug"],
         index=0
     )
     
-    # Source filter
-    source_filter = st.selectbox(
-        "Kaynak",
-        ["Tümü", "Web Arayüzü", "GitHub Actions", "Zamanlanmış"],
+    # İşlem türü
+    operation_type = st.multiselect(
+        "İşlem Türü",
+        ["Senkronizasyon", "Fiyat Güncelleme", "Ürün Oluşturma", "Ürün Güncelleme", "Hata Ayıklama"],
+        default=["Senkronizasyon"]
+    )
+    
+    # Başarı durumu
+    success_filter = st.selectbox(
+        "Başarı Durumu",
+        ["Tümü", "Başarılı", "Başarısız", "Kısmi Başarı", "Devam Eden"],
         index=0
     )
     
-    # Auto refresh
-    auto_refresh = st.checkbox("Otomatik Yenile (30s)", value=False)
+    # Canlı izleme
+    live_monitoring = st.checkbox("🔴 Canlı İzleme (5s)", value=False)
     
-    if auto_refresh:
-        st.rerun()
+    # Ayarlar
+    st.header("⚙️ Görünüm Ayarları")
+    show_charts = st.checkbox("📊 Grafikleri Göster", value=True)
+    show_details = st.checkbox("📋 Detayları Göster", value=True)
+    items_per_page = st.selectbox("Sayfa başına kayıt", [25, 50, 100, 200], index=1)
 
-# Stats summary
-st.subheader("📊 Özet İstatistikler")
+# Ana içerik
+# Canlı yenileme
+if live_monitoring:
+    placeholder = st.empty()
+    auto_refresh_placeholder = st.empty()
+    
+    with auto_refresh_placeholder:
+        st.info("🔴 Canlı izleme aktif - 5 saniyede bir yenileniyor...")
 
-# Get date range in days
-days_map = {
+# Veri yükleme
+@st.cache_data(ttl=60)  # 1 dakika cache
+def load_all_logs():
+    all_logs = []
+    
+    if data_source in ["SQLite Database", "Kombine Görünüm"]:
+        all_logs.extend(get_system_logs())
+    
+    if data_source in ["Sync History JSON", "Kombine Görünüm"]:
+        all_logs.extend(get_sync_history_logs())
+    
+    return all_logs
+
+# Veri yükleme ve işleme
+logs_data = load_all_logs()
+
+if not logs_data:
+    st.warning("📭 Hiç log verisi bulunamadı. Henüz bir işlem yapılmamış olabilir.")
+    st.stop()
+
+# DataFrame'e çevir
+df = pd.DataFrame(logs_data)
+df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+
+# Filtreleme işlemleri
+# Zaman filtresi
+time_map = {
+    "Son 1 Saat": 1/24,
+    "Son 6 Saat": 6/24,
     "Son 24 Saat": 1,
     "Son 7 Gün": 7,
     "Son 30 Gün": 30,
     "Tümü": 365
 }
-days = days_map.get(date_range, 7)
 
-try:
-    stats = log_manager.get_stats_summary(days)
+if time_range != "Tümü":
+    cutoff_time = datetime.now() - timedelta(days=time_map[time_range])
+    df = df[df['timestamp'] >= cutoff_time]
+
+# Başarı durumu filtresi
+if success_filter != "Tümü":
+    status_map = {
+        "Başarılı": ["completed"],
+        "Başarısız": ["failed"],
+        "Kısmi Başarı": ["partial"],
+        "Devam Eden": ["running", "started"]
+    }
+    if success_filter in status_map:
+        df = df[df['status'].isin(status_map[success_filter])]
+
+# Ana Dashboard Metrikleri
+if not df.empty:
+    st.subheader("📊 Anlık Sistem Durumu")
     
-    col1, col2, col3, col4 = st.columns(4)
+    # Üst metrikler
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.metric(
-            "Toplam İşlem",
-            stats['total_operations'],
-            help="Tüm senkronizasyon işlemleri"
-        )
+        total_ops = len(df)
+        st.metric("Toplam İşlem", total_ops)
     
     with col2:
-        st.metric(
-            "Başarı Oranı",
-            f"{stats['success_rate']:.1f}%",
-            delta=f"{stats['successful_operations']}/{stats['total_operations']}",
-            help="Başarılı işlem oranı"
-        )
+        successful_ops = len(df[df['status'] == 'completed'])
+        success_rate = (successful_ops / total_ops * 100) if total_ops > 0 else 0
+        st.metric("Başarı Oranı", f"{success_rate:.1f}%", 
+                 delta=f"{successful_ops}/{total_ops}")
     
     with col3:
-        st.metric(
-            "İşlenen Ürün",
-            f"{stats['total_processed']:,}",
-            delta=f"+{stats['total_created']:,} yeni",
-            help="Toplam işlenen ürün sayısı"
-        )
+        total_processed = df['processed'].sum()
+        st.metric("İşlenen Ürün", f"{total_processed:,}")
     
     with col4:
-        st.metric(
-            "Hata Sayısı",
-            stats['error_count'],
-            delta=f"{stats['total_failed']:,} başarısız ürün",
-            delta_color="inverse",
-            help="Toplam hata ve başarısız ürün sayısı"
-        )
-
-except Exception as e:
-    st.error(f"İstatistik alınırken hata: {e}")
-
-st.markdown("---")
-
-# Recent logs table
-st.subheader("🔄 Son İşlemler")
-
-try:
-    # Apply filters
-    log_type_map = {
-        "Senkronizasyon": "sync",
-        "Fiyat Güncelleme": "price_update", 
-        "Hatalar": "error",
-        "Sistem": "system"
-    }
+        total_failed = df['failed'].sum()
+        st.metric("Başarısız", total_failed, 
+                 delta=-total_failed if total_failed > 0 else None,
+                 delta_color="inverse")
     
-    log_type = log_type_map.get(log_type_filter) if log_type_filter != "Tümü" else None
-    
-    logs = log_manager.get_recent_logs(limit=100, log_type=log_type)
-    
-    if logs:
-        # Convert to DataFrame
-        df = pd.DataFrame(logs)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
-        # Apply date filter
-        if date_range != "Tümü":
-            cutoff_date = datetime.now() - timedelta(days=days)
-            df = df[df['timestamp'] >= cutoff_date]
-        
-        # Apply source filter
-        source_map = {
-            "Web Arayüzü": "web_ui",
-            "GitHub Actions": "github_actions",
-            "Zamanlanmış": "scheduled"
-        }
-        if source_filter != "Tümü":
-            source_val = source_map.get(source_filter)
-            if source_val:
-                df = df[df['source'] == source_val]
-        
-        if not df.empty:
-            # Format data for display
-            display_df = df.copy()
-            display_df['Zaman'] = display_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            display_df['Tip'] = display_df['log_type'].map({
-                'sync': '🔄 Senkronizasyon',
-                'price_update': '💰 Fiyat Güncelleme', 
-                'error': '❌ Hata',
-                'system': '⚙️ Sistem'
-            })
-            display_df['Durum'] = display_df['status'].map({
-                'started': '🟡 Başlatıldı',
-                'running': '🔵 Devam Ediyor',
-                'completed': '✅ Tamamlandı',
-                'failed': '❌ Başarısız',
-                'partial': '⚠️ Kısmi Başarı'
-            })
-            display_df['Kaynak'] = display_df['source'].map({
-                'web_ui': '🖥️ Web Arayüzü',
-                'github_actions': '🤖 GitHub Actions',
-                'scheduled': '⏰ Zamanlanmış'
-            })
-            
-            # Select columns for display
-            cols_to_show = ['Zaman', 'Tip', 'Durum', 'Kaynak', 'sync_mode', 'processed', 'duration']
-            available_cols = [col for col in cols_to_show if col in display_df.columns]
-            
-            st.dataframe(
-                display_df[available_cols].rename(columns={
-                    'sync_mode': 'Mod',
-                    'processed': 'İşlenen',
-                    'duration': 'Süre'
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Detailed view
-    with st.expander("📋 Detaylı Görünüm"):
-        if 'df' in locals() and not df.empty:
-            selected_idx = st.selectbox(
-                "Log seçin:",
-                range(len(df)),
-                format_func=lambda x: f"{df.iloc[x]['timestamp'].strftime('%Y-%m-%d %H:%M')} - {df.iloc[x]['log_type']}"
-            )
+    with col5:
+        if not df.empty and df['timestamp'].notna().any():
+            last_operation = df['timestamp'].max()
+            time_since = datetime.now() - last_operation
+            if time_since.total_seconds() < 3600:
+                time_str = f"{int(time_since.total_seconds()/60)} dk önce"
+            elif time_since.total_seconds() < 86400:
+                time_str = f"{int(time_since.total_seconds()/3600)} sa önce"
+            else:
+                time_str = f"{time_since.days} gün önce"
+            st.metric("Son İşlem", time_str)
 
-            if selected_idx is not None:
-                log_detail = df.iloc[selected_idx].to_dict()
-                base_shopify_url = None
-                try:
-                    shopify_store_url_full = config_manager.get('shopify_store_url')
-                    if shopify_store_url_full:
-                        base_shopify_url = '/'.join(shopify_store_url_full.split('/')[:3])
-                    else:
-                        st.warning("Shopify mağaza URL'si config dosyasında bulunamadı veya boş.")
-                except Exception as e:
-                    st.error(f"Config dosyasından URL alınırken hata oluştu: {e}")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write("**Temel Bilgiler:**")
-                    st.write(f"- **ID:** {log_detail.get('id')}")
-                    st.write(f"- **Zaman:** {log_detail.get('timestamp')}")
-                    st.write(f"- **Tip:** {log_detail.get('log_type')}")
-                    st.write(f"- **Durum:** {log_detail.get('status')}")
-                    st.write(f"- **Kaynak:** {log_detail.get('source')}")
-                    if log_detail.get('user_id'):
-                        st.write(f"- **Kullanıcı:** {log_detail.get('user_id')}")
-
-                with col2:
-                    st.write("**İstatistikler:**")
-                    stats_keys = ['total_products', 'processed', 'created', 'updated', 'failed', 'skipped', 'duration', 'worker_count']
-                    for key in stats_keys:
-                        if pd.notna(log_detail.get(key)):
-                             st.write(f"- **{key.replace('_', ' ').capitalize()}:** {log_detail[key]}")
-
-                if pd.notna(log_detail.get('error_message')):
-                    st.write("**Hata Mesajı:**")
-                    st.error(log_detail['error_message'])
-
-                if pd.notna(log_detail.get('details')):
-                    st.write("**Detaylar ve Bağlantılar:**")
-                    try:
-                        details_data = json.loads(log_detail['details'])
-                        if base_shopify_url and 'processed_products' in details_data and details_data.get('processed_products'):
-                            st.write("**İşlenen Ürünlere Hızlı Erişim:**")
-                            product_links = []
-                            for product in details_data['processed_products']:
-                                if 'id' in product:
-                                    try:
-                                        numeric_id = product['id'].split('/')[-1]
-                                        product_url = f"{base_shopify_url}/admin/products/{numeric_id}"
-                                        product_title = product.get('title', f"ID: {numeric_id}")
-                                        product_links.append(f"- [{product_title}]({product_url})")
-                                    except (IndexError, TypeError):
-                                        product_links.append(f"- Ürün ID'si ayrıştırılamadı: {product.get('id')}")
-                                else:
-                                    product_links.append("- Ürün bilgisi eksik (ID yok)")
-                            st.markdown("\n".join(product_links), unsafe_allow_html=True)
-                            st.markdown("---")
-                        
-                        st.json(details_data)
-                    except (json.JSONDecodeError, TypeError):
-                        st.text(log_detail['details'])
-        else:
-            st.info("Görüntülenecek log bulunamadı.")
-
-except Exception as e:
-    st.error(f"Loglar yüklenirken bir hata oluştu: {e}")
-
-# Charts section
-if logs and not df.empty:
+    # Sistem Sağlık Durumu
     st.markdown("---")
-    st.subheader("📈 Görsel Analiz")
+    health_cols = st.columns([2, 1, 1])
     
-    tab1, tab2, tab3 = st.tabs(["Zaman Serisi", "Durum Dağılımı", "Kaynak Analizi"])
+    with health_cols[0]:
+        if success_rate >= 95:
+            st.success("✅ Sistem Mükemmel Durumda")
+        elif success_rate >= 85:
+            st.warning("⚠️ Sistem Normal, Bazı Uyarılar Var")
+        else:
+            st.error("❌ Sistem Kritik Durumda")
     
-    with tab1:
-        # Timeline chart
-        timeline_df = df.groupby([df['timestamp'].dt.date, 'status']).size().reset_index(name='count')
-        timeline_df['timestamp'] = pd.to_datetime(timeline_df['timestamp'])
+    with health_cols[1]:
+        recent_failures = len(df[(df['status'] == 'failed') & 
+                               (df['timestamp'] >= datetime.now() - timedelta(hours=24))])
+        st.metric("24s İçinde Hata", recent_failures)
+    
+    with health_cols[2]:
+        avg_processing = df['processed'].mean() if not df.empty else 0
+        st.metric("Ortalama İşlem", f"{avg_processing:.0f}")
+
+# Görsel Analiz
+if show_charts and not df.empty:
+    st.markdown("---")
+    st.subheader("📈 Görsel Analiz ve Trendler")
+    
+    # Üç ayrı grafik sekmesi
+    chart_tab1, chart_tab2, chart_tab3, chart_tab4 = st.tabs([
+        "⏱️ Zaman Serisi", "📊 Durum Analizi", "🔄 İşlem Performansı", "🎯 Detaylı Metrikler"
+    ])
+    
+    with chart_tab1:
+        # Zaman serisi analizi
+        if len(df) > 1:
+            # Günlük işlem sayısı
+            daily_stats = df.groupby([df['timestamp'].dt.date, 'status']).size().reset_index(name='count')
+            daily_stats['timestamp'] = pd.to_datetime(daily_stats['timestamp'])
+            
+            fig = px.area(daily_stats, x='timestamp', y='count', color='status',
+                         title="Günlük İşlem Dağılımı",
+                         labels={'count': 'İşlem Sayısı', 'timestamp': 'Tarih'})
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Saatlik aktivite haritası
+            if len(df) > 24:
+                df['hour'] = df['timestamp'].dt.hour
+                df['day'] = df['timestamp'].dt.day_name()
+                hourly_heatmap = df.groupby(['day', 'hour']).size().reset_index(name='count')
+                
+                if not hourly_heatmap.empty:
+                    fig = px.density_heatmap(hourly_heatmap, x='hour', y='day', z='count',
+                                           title="Saatlik Aktivite Haritası")
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    with chart_tab2:
+        # Durum analizi
+        col_chart1, col_chart2 = st.columns(2)
         
-        if not timeline_df.empty:
-            fig = px.line(
-                timeline_df, 
-                x='timestamp', 
-                y='count',
-                color='status',
-                title="Günlük İşlem Sayısı",
-                labels={'count': 'İşlem Sayısı', 'timestamp': 'Tarih'}
-            )
+        with col_chart1:
+            status_dist = df['status'].value_counts()
+            fig = px.pie(values=status_dist.values, names=status_dist.index,
+                        title="İşlem Durumu Dağılımı")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col_chart2:
+            source_dist = df['source'].value_counts()
+            fig = px.bar(x=source_dist.values, y=source_dist.index, 
+                        orientation='h', title="Kaynak Dağılımı")
             st.plotly_chart(fig, use_container_width=True)
     
-    with tab2:
-        # Status distribution
-        status_counts = df['status'].value_counts()
-        if not status_counts.empty:
-            fig = px.pie(
-                values=status_counts.values,
-                names=status_counts.index,
-                title="Durum Dağılımı"
-            )
+    with chart_tab3:
+        # Performance metrikleri
+        if 'processed' in df.columns and df['processed'].sum() > 0:
+            # İşlem performance'ı
+            perf_metrics = df.groupby(df['timestamp'].dt.date).agg({
+                'processed': 'sum',
+                'created': 'sum',
+                'updated': 'sum',
+                'failed': 'sum'
+            }).reset_index()
+            
+            fig = make_subplots(rows=2, cols=2,
+                              subplot_titles=('İşlenen Ürünler', 'Oluşturulan', 'Güncellenen', 'Başarısız'))
+            
+            fig.add_trace(go.Scatter(x=perf_metrics['timestamp'], y=perf_metrics['processed'],
+                                   name='İşlenen'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=perf_metrics['timestamp'], y=perf_metrics['created'],
+                                   name='Oluşturulan'), row=1, col=2)
+            fig.add_trace(go.Scatter(x=perf_metrics['timestamp'], y=perf_metrics['updated'],
+                                   name='Güncellenen'), row=2, col=1)
+            fig.add_trace(go.Scatter(x=perf_metrics['timestamp'], y=perf_metrics['failed'],
+                                   name='Başarısız'), row=2, col=2)
+            
+            fig.update_layout(height=600, title_text="Günlük Performance Metrikleri")
             st.plotly_chart(fig, use_container_width=True)
     
-    with tab3:
-        # Source analysis
-        source_counts = df['source'].value_counts()
-        if not source_counts.empty:
-            fig = px.bar(
-                x=source_counts.index,
-                y=source_counts.values,
-                title="Kaynak Bazında İşlem Sayısı",
-                labels={'x': 'Kaynak', 'y': 'İşlem Sayısı'}
+    with chart_tab4:
+        # Detaylı metrikler
+        if len(df) > 0:
+            # Success rate trend
+            df_sorted = df.sort_values('timestamp')
+            df_sorted['success_rate_rolling'] = (
+                df_sorted['status'].eq('completed').rolling(window=10, min_periods=1).mean() * 100
             )
+            
+            fig = px.line(df_sorted, x='timestamp', y='success_rate_rolling',
+                         title="Başarı Oranı Trendi (10 İşlem Ortalaması)")
+            fig.add_hline(y=95, line_dash="dash", line_color="green", 
+                         annotation_text="Hedef: %95")
             st.plotly_chart(fig, use_container_width=True)
 
-# Cleanup section
+# Detaylı Log Tablosu
+if show_details:
+    st.markdown("---")
+    st.subheader("📋 Detaylı Log Kayıtları")
+    
+    # Arama ve filtreleme
+    search_cols = st.columns([3, 1])
+    with search_cols[0]:
+        search_query = st.text_input("🔍 Log içeriğinde ara:", 
+                                   placeholder="Ürün adı, hata mesajı, ID...")
+    with search_cols[1]:
+        sort_order = st.selectbox("Sıralama", ["Yeni → Eski", "Eski → Yeni"])
+    
+    # Arama filtresi uygula
+    display_df = df.copy()
+    if search_query:
+        mask = (
+            display_df['details'].str.contains(search_query, case=False, na=False) |
+            display_df['error_message'].str.contains(search_query, case=False, na=False)
+        )
+        display_df = display_df[mask]
+    
+    # Sıralama
+    if sort_order == "Eski → Yeni":
+        display_df = display_df.sort_values('timestamp')
+    else:
+        display_df = display_df.sort_values('timestamp', ascending=False)
+    
+    # Sayfalama
+    total_records = len(display_df)
+    total_pages = (total_records - 1) // items_per_page + 1 if total_records > 0 else 1
+    
+    page_cols = st.columns([1, 2, 1])
+    with page_cols[1]:
+        current_page = st.selectbox(
+            f"Sayfa (Toplam: {total_pages}, Kayıt: {total_records})",
+            range(1, total_pages + 1),
+            index=0
+        )
+    
+    # Sayfa verilerini al
+    start_idx = (current_page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    page_df = display_df.iloc[start_idx:end_idx]
+    
+    if not page_df.empty:
+        # Tablo gösterimi
+        for idx, row in page_df.iterrows():
+            with st.expander(
+                f"🔸 {row['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if pd.notna(row['timestamp']) else 'N/A'} - "
+                f"{row['log_type']} - {row['status']} "
+                f"({row.get('processed', 0)} işlenen)",
+                expanded=False
+            ):
+                detail_cols = st.columns([2, 2, 1])
+                
+                with detail_cols[0]:
+                    st.write("**📊 İstatistikler:**")
+                    stats_html = f"""
+                    - **İşlenen:** {row.get('processed', 0)}
+                    - **Oluşturulan:** {row.get('created', 0)}
+                    - **Güncellenen:** {row.get('updated', 0)}
+                    - **Başarısız:** {row.get('failed', 0)}
+                    - **Atlanan:** {row.get('skipped', 0)}
+                    """
+                    st.markdown(stats_html)
+                
+                with detail_cols[1]:
+                    st.write("**ℹ️ Detaylar:**")
+                    info_html = f"""
+                    - **ID:** {row.get('id', 'N/A')}
+                    - **Kaynak:** {row.get('source', 'N/A')}
+                    - **Mod:** {row.get('sync_mode', 'N/A')}
+                    - **Süre:** {row.get('duration', 'N/A')}
+                    """
+                    st.markdown(info_html)
+                
+                with detail_cols[2]:
+                    # İşlem durumu göstergesi
+                    status = row.get('status', 'unknown')
+                    if status == 'completed':
+                        st.success("✅ Başarılı")
+                    elif status == 'failed':
+                        st.error("❌ Başarısız")
+                    elif status == 'partial':
+                        st.warning("⚠️ Kısmi")
+                    else:
+                        st.info("ℹ️ Diğer")
+                
+                # Hata mesajı
+                if pd.notna(row.get('error_message')):
+                    st.error(f"**Hata:** {row['error_message']}")
+                
+                # JSON detaylar
+                if pd.notna(row.get('details')):
+                    with st.expander("📄 JSON Detayları"):
+                        try:
+                            details_data = json.loads(row['details'])
+                            st.json(details_data)
+                        except:
+                            st.text(row['details'])
+
+# Export İşlemleri
 st.markdown("---")
-st.subheader("🧹 Bakım İşlemleri")
+st.subheader("📥 Export ve Paylaşım")
 
-col1, col2 = st.columns(2)
+export_cols = st.columns(4)
 
-with col1:
-    if st.button("🗑️ Eski Logları Temizle (30+ gün)", type="secondary"):
-        try:
-            deleted_count = log_manager.cleanup_old_logs(30)
-            st.success(f"✅ {deleted_count} eski log kaydı silindi.")
-        except Exception as e:
-            st.error(f"❌ Temizleme sırasında hata: {e}")
+with export_cols[0]:
+    if st.button("📊 Excel Export", use_container_width=True):
+        if not df.empty:
+            # Excel dosyası oluştur
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # Ana veriler
+                export_df = df.copy()
+                export_df['timestamp'] = export_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                export_df.to_excel(writer, sheet_name='Logs', index=False)
+                
+                # Özet istatistikler
+                summary_data = {
+                    'Metrik': ['Toplam İşlem', 'Başarılı', 'Başarısız', 'Başarı Oranı'],
+                    'Değer': [len(df), successful_ops, len(df) - successful_ops, f"{success_rate:.1f}%"]
+                }
+                pd.DataFrame(summary_data).to_excel(writer, sheet_name='Özet', index=False)
+            
+            st.download_button(
+                label="📁 Excel Dosyasını İndir",
+                data=output.getvalue(),
+                file_name=f"logs_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-with col2:
-    st.info("📌 **Not:** Loglar otomatik olarak 30 gün sonra temizlenir.")
+with export_cols[1]:
+    if st.button("📄 CSV Export", use_container_width=True):
+        if not df.empty:
+            csv_buffer = io.StringIO()
+            export_df = df.copy()
+            export_df['timestamp'] = export_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            export_df.to_csv(csv_buffer, index=False)
+            
+            st.download_button(
+                label="📁 CSV Dosyasını İndir",
+                data=csv_buffer.getvalue(),
+                file_name=f"logs_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
 
-# Auto refresh
-if auto_refresh:
-    import time
-    time.sleep(30)
+with export_cols[2]:
+    if st.button("🧹 Log Temizleme", use_container_width=True):
+        st.warning("Bu özellik geliştirilme aşamasında...")
+
+with export_cols[3]:
+    if st.button("⚠️ Alert Kurulumu", use_container_width=True):
+        st.info("Alert sistemi geliştirilme aşamasında...")
+
+# Canlı yenileme
+if live_monitoring:
+    time.sleep(5)
     st.rerun()
+
