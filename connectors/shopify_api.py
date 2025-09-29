@@ -130,6 +130,7 @@ class ShopifyAPI:
                 customer { firstName, lastName, email, phone, numberOfOrders }
                 
                 currentSubtotalPriceSet { shopMoney { amount, currencyCode } }
+                totalPriceSet { shopMoney { amount, currencyCode } }
                 originalTotalPriceSet { shopMoney { amount, currencyCode } }
                 totalShippingPriceSet { shopMoney { amount, currencyCode } }
                 totalTaxSet { shopMoney { amount, currencyCode } }
@@ -143,6 +144,11 @@ class ShopifyAPI:
                     discountedUnitPriceSet { shopMoney { amount, currencyCode } }
                     totalDiscountSet { shopMoney { amount, currencyCode } }
                   }
+                }
+                
+                shippingAddress {
+                  name, address1, address2, city, province, provinceCode
+                  zip, country, countryCodeV2, phone
                 }
               }
             }

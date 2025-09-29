@@ -165,15 +165,26 @@ if 'shopify_orders_display' in st.session_state:
                 total = float(order.get('totalPriceSet', {}).get('shopMoney', {}).get('amount', 0))
                 currency = order.get('totalPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
                 
+                # Güvenli tarih formatı
+                created_at = order.get('createdAt', '')
+                if created_at:
+                    try:
+                        order_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        date_str = order_date.strftime('%d.%m.%Y %H:%M')
+                    except:
+                        date_str = created_at[:10] if len(created_at) >= 10 else 'N/A'
+                else:
+                    date_str = 'N/A'
+                
                 table_data.append({
                     "Sipariş No": order.get('name', 'N/A'),
-                    "Tarih": datetime.fromisoformat(order.get('createdAt', '').replace('Z', '+00:00')).strftime('%d.%m.%Y %H:%M'),
+                    "Tarih": date_str,
                     "Müşteri": customer_name or 'Misafir',
                     "Email": customer.get('email', 'N/A'),
                     "Tutar": f"{total:.2f} {currency}",
                     "Ödeme": order.get('displayFinancialStatus', 'N/A'),
                     "Kargo": order.get('displayFulfillmentStatus', 'N/A'),
-                    "Not": order.get('note', '')[:50] + '...' if len(order.get('note', '')) > 50 else order.get('note', 'Yok')
+                    "Not": (order.get('note', '') or '')[:50] + '...' if len(order.get('note', '') or '') > 50 else (order.get('note', '') or 'Yok')
                 })
             
             df = pd.DataFrame(table_data)
@@ -207,8 +218,16 @@ if 'shopify_orders_display' in st.session_state:
                     with cols[3]:
                         st.markdown(f"<span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 2px 6px; border-radius: 3px; font-size: 12px;'>{fulfillment_status}</span>", unsafe_allow_html=True)
                     with cols[4]:
-                        order_date = datetime.fromisoformat(order.get('createdAt', '').replace('Z', '+00:00'))
-                        st.caption(order_date.strftime('%d.%m.%Y\n%H:%M'))
+                        # Güvenli tarih formatı
+                        created_at = order.get('createdAt', '')
+                        if created_at:
+                            try:
+                                order_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                                st.caption(order_date.strftime('%d.%m.%Y\n%H:%M'))
+                            except:
+                                st.caption(created_at[:10] if len(created_at) >= 10 else 'N/A')
+                        else:
+                            st.caption('N/A')
         
         else:  # Detaylı Kart Görünümü
             for order in page_orders:
@@ -221,14 +240,29 @@ if 'shopify_orders_display' in st.session_state:
                 
                 customer = order.get('customer') or {}
                 customer_name = f"{customer.get('firstName', '')} {customer.get('lastName', '')}".strip()
-                order_date = datetime.fromisoformat(order.get('createdAt', '').replace('Z', '+00:00'))
                 
-                with st.expander(f"🛍️ **{order.get('name')}** - {customer_name or 'Misafir'} ({order_date.strftime('%d.%m.%Y %H:%M')})", expanded=False):
+                # Güvenli tarih formatı
+                created_at = order.get('createdAt', '')
+                if created_at:
+                    try:
+                        order_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        date_str = order_date.strftime('%d.%m.%Y %H:%M')
+                        date_display = order_date.strftime('%d %B %Y, %H:%M')
+                    except:
+                        date_str = created_at[:16] if len(created_at) >= 16 else 'N/A'
+                        date_display = created_at[:16] if len(created_at) >= 16 else 'N/A'
+                        order_date = None
+                else:
+                    date_str = 'N/A'
+                    date_display = 'N/A'
+                    order_date = None
+                
+                with st.expander(f"🛍️ **{order.get('name')}** - {customer_name or 'Misafir'} ({date_str})", expanded=False):
                     # Ana bilgiler
                     info_cols = st.columns([2, 1])
                     with info_cols[0]:
                         st.markdown(f"""
-                        **📅 Sipariş Tarihi:** {order_date.strftime('%d %B %Y, %H:%M')}  
+                        **📅 Sipariş Tarihi:** {date_display}  
                         **💳 Ödeme Durumu:** <span style='background-color:{status_colors.get(financial_status, 'gray')}; color:white; padding: 4px 8px; border-radius: 5px;'>{financial_status}</span>  
                         **📦 Kargo Durumu:** <span style='background-color:{status_colors.get(fulfillment_status, 'gray')}; color:white; padding: 4px 8px; border-radius: 5px;'>{fulfillment_status}</span>
                         """, unsafe_allow_html=True)
@@ -295,7 +329,7 @@ if 'shopify_orders_display' in st.session_state:
                         **📧 Email:** {customer.get('email', 'Belirtilmemiş')}  
                         **📞 Telefon:** {customer.get('phone', 'Belirtilmemiş')}  
                         **🛍️ Toplam Sipariş:** {customer.get('numberOfOrders', 0)} sipariş  
-                        **🆔 Müşteri ID:** `{customer.get('id', 'N/A')}`
+                        **🆔 Müşteri ID:** `{customer.get('id', 'N/A') or 'N/A'}`
                         """)
                         
                         # Kargo adresi
@@ -328,7 +362,7 @@ if 'shopify_orders_display' in st.session_state:
                             st.markdown("### 🏷️ Etiketler")
                             tags = order.get('tags', '').split(', ') if order.get('tags') else []
                             for tag in tags[:5]:  # İlk 5 etiketi göster
-                                st.tag(tag)
+                                st.markdown(f"<span style='background-color:#e1f5fe; color:#01579b; padding: 2px 6px; border-radius: 10px; font-size: 12px; display: inline-block; margin: 2px;'>🏷️ {tag}</span>", unsafe_allow_html=True)
                         
                         # Risk analizi (varsa)
                         if order.get('riskLevel'):
