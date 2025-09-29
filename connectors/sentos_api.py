@@ -241,3 +241,39 @@ class SentosAPI:
             logging.error(f"Test: Hata oluştu: {e}")
         
         return result
+
+    # ========== DASHBOARD İÇİN YENİ METODLAR ==========
+    
+    def get_dashboard_stats(self):
+        """Dashboard için Sentos API istatistikleri"""
+        stats = {
+            'total_products': 0,
+            'categories_count': 0,
+            'recent_updates': [],
+            'stock_alerts': [],
+            'api_status': 'unknown'
+        }
+        
+        try:
+            # Ürün sayısını al (ilk sayfayı çekerek toplam sayıyı öğren)
+            response = self._make_request("GET", "/products?page=1&size=1").json()
+            stats['total_products'] = response.get('total_elements', 0)
+            stats['api_status'] = 'connected'
+            
+            # Son eklenen ürünleri al
+            recent_response = self._make_request("GET", "/products?page=1&size=10").json()
+            stats['recent_updates'] = recent_response.get('data', [])[:5]
+            
+            # Kategori bilgileri (eğer API'da varsa)
+            try:
+                categories_response = self._make_request("GET", "/categories?page=1&size=1").json()
+                stats['categories_count'] = categories_response.get('total_elements', 0)
+            except:
+                stats['categories_count'] = 0
+            
+        except Exception as e:
+            logging.error(f"Sentos dashboard istatistikleri alınırken hata: {e}")
+            stats['api_status'] = 'failed'
+            stats['error'] = str(e)
+        
+        return stats
