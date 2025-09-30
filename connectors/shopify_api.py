@@ -79,9 +79,16 @@ class ShopifyAPI:
             raise e
 
     def execute_graphql(self, query, variables=None):
+        """GraphQL sorgusunu çalıştırır - gelişmiş hata yönetimi ile."""
         payload = {'query': query, 'variables': variables or {}}
         max_retries = 8
         retry_delay = 2
+        
+        # Debug için sorgu bilgilerini logla
+        logging.debug(f"GraphQL Query: {query[:100]}...")
+        if variables:
+            logging.debug(f"GraphQL Variables: {json.dumps(variables, indent=2)[:200]}...")
+            
         for attempt in range(max_retries):
             try:
                 response = requests.post(self.graphql_url, headers=self.headers, json=payload, timeout=90)
@@ -89,9 +96,12 @@ class ShopifyAPI:
                 response_data = response.json()
                 
                 if "errors" in response_data:
+                    errors = response_data.get("errors", [])
+                    
+                    # Throttling kontrolü
                     is_throttled = any(
                         err.get('extensions', {}).get('code') == 'THROTTLED' 
-                        for err in response_data.get("errors", [])
+                        for err in errors
                     )
                     if is_throttled and attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)
@@ -99,9 +109,29 @@ class ShopifyAPI:
                         time.sleep(wait_time)
                         continue
                     
-                    error_messages = [err.get('message', 'Bilinmeyen GraphQL hatası') for err in response_data.get("errors", [])]
-                    logging.error(f"GraphQL sorgusu hata verdi: {json.dumps(response_data['errors'], indent=2)}")
-                    raise Exception(f"GraphQL Error: {', '.join(error_messages)}")
+                    # Hata detaylarını logla
+                    logging.error("GraphQL Hatası Detayları:")
+                    logging.error(f"Query: {query}")
+                    if variables:
+                        logging.error(f"Variables: {json.dumps(variables, indent=2)}")
+                    logging.error(f"Errors: {json.dumps(errors, indent=2)}")
+                    
+                    # Hata mesajlarını topla
+                    error_messages = []
+                    for err in errors:
+                        msg = err.get('message', 'Bilinmeyen GraphQL hatası')
+                        locations = err.get('locations', [])
+                        path = err.get('path', [])
+                        
+                        error_detail = msg
+                        if locations:
+                            error_detail += f" (Satır: {locations[0].get('line', '?')})"
+                        if path:
+                            error_detail += f" (Alan: {'.'.join(map(str, path))})"
+                            
+                        error_messages.append(error_detail)
+                    
+                    raise Exception(f"GraphQL Error: {'; '.join(error_messages)}")
 
                 return response_data.get("data", {})
             except requests.exceptions.HTTPError as e:
@@ -117,6 +147,66 @@ class ShopifyAPI:
                  logging.error(f"API bağlantı hatası: {e}. Bu hata için tekrar deneme yapılmıyor.")
                  raise e
         raise Exception(f"API isteği {max_retries} denemenin ardından başarısız oldu.")
+
+    def find_customer_by_email(self, email):
+        """YENİ: Verilen e-posta ile müşteri arar."""
+        query = """
+        query($email: String!) {
+          customers(first: 1, query: $email) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+        """
+        result = self.execute_graphql(query, {"email": f"email:{email}"})
+        edges = result.get('customers', {}).get('edges', [])
+        return edges[0]['node']['id'] if edges else None
+
+    def create_customer(self, customer_data):
+        """YENİ: Yeni bir müşteri oluşturur."""
+        mutation = """
+        mutation customerCreate($input: CustomerInput!) {
+          customerCreate(input: $input) {
+            customer {
+              id
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        input_data = {
+            "firstName": customer_data.get('firstName'),
+            "lastName": customer_data.get('lastName'),
+            "email": customer_data.get('email'),
+            "phone": customer_data.get('phone')
+        }
+        result = self.execute_graphql(mutation, {"input": input_data})
+        if errors := result.get('customerCreate', {}).get('userErrors', []):
+            raise Exception(f"Müşteri oluşturma hatası: {errors}")
+        return result.get('customerCreate', {}).get('customer', {}).get('id')
+
+    def find_variant_id_by_sku(self, sku):
+        """YENİ: Verilen SKU ile ürün varyantı arar."""
+        query = """
+        query($sku: String!) {
+          productVariants(first: 1, query: $sku) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+        """
+        result = self.execute_graphql(query, {"sku": f"sku:{sku}"})
+        edges = result.get('productVariants', {}).get('edges', [])
+        return edges[0]['node']['id'] if edges else None
 
     def get_orders_by_date_range(self, start_date_iso, end_date_iso):
         all_orders = []
@@ -144,6 +234,7 @@ class ShopifyAPI:
                 }
                 
                 currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+                currentTotalPriceSet { shopMoney { amount currencyCode } }
                 totalPriceSet { shopMoney { amount currencyCode } }
                 originalTotalPriceSet { shopMoney { amount currencyCode } }
                 totalShippingPriceSet { shopMoney { amount currencyCode } }
@@ -198,7 +289,51 @@ class ShopifyAPI:
             time.sleep(1)
 
         return all_orders
+
+    def create_order(self, order_input):
+        """YENİ: Verilen bilgilerle yeni bir sipariş oluşturur - Doğru GraphQL type ve field'lar ile."""
+        # Shopify'ın güncel API'sine göre doğru type: OrderCreateOrderInput!
+        mutation = """
+        mutation orderCreate($order: OrderCreateOrderInput!) {
+          orderCreate(order: $order) {
+            order {
+              id
+              name
+              createdAt
+              totalPrice
+              email
+              customer {
+                id
+                email
+              }
+              shippingAddress {
+                firstName
+                lastName
+                address1
+                city
+                country
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        # Doğru variable name ve type ile GraphQL çağrısı
+        result = self.execute_graphql(mutation, {"order": order_input})
         
+        if errors := result.get('orderCreate', {}).get('userErrors', []):
+            error_messages = [f"{error.get('field', 'Genel')}: {error.get('message', 'Bilinmeyen hata')}" for error in errors]
+            raise Exception(f"Sipariş oluşturma hatası: {'; '.join(error_messages)}")
+            
+        order = result.get('orderCreate', {}).get('order', {})
+        if not order:
+            raise Exception("Sipariş oluşturuldu ancak sipariş bilgileri alınamadı")
+            
+        return order  
+
     def get_locations(self):
         query = """
         query {

@@ -13,6 +13,8 @@ def load_all_user_keys(username):
     return {
         "shopify_store": st.secrets.get("SHOPIFY_STORE"),
         "shopify_token": st.secrets.get("SHOPIFY_TOKEN"),
+        "shopify_destination_store": st.secrets.get("SHOPIFY_DESTINATION_STORE"),
+        "shopify_destination_token": st.secrets.get("SHOPIFY_DESTINATION_TOKEN"),
         "sentos_api_url": st.secrets.get("SENTOS_API_URL"),
         "sentos_api_key": st.secrets.get("SENTOS_API_KEY"),
         "sentos_api_secret": st.secrets.get("SENTOS_API_SECRET"),
