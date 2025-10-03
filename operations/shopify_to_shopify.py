@@ -115,10 +115,12 @@ def transfer_order(source_api, destination_api, order_data):
         # Debug bilgileri
         log_messages.append(f"💰 Tutar Analizi:")
         log_messages.append(f"  📊 Orijinal (totalPriceSet): ₺{original_total:.2f}")
-        log_messages.append(f"  � Güncel (currentTotalPriceSet): ₺{current_total:.2f}")
+        log_messages.append(f"  ✅ Güncel (currentTotalPriceSet): ₺{current_total:.2f}")
         log_messages.append(f"  📊 Manuel (subtotal-indirim+kargo+vergi): ₺{calculated_total:.2f}")
-        log_messages.append(f"  � Detay: Subtotal ₺{subtotal:.2f} - İndirim ₺{discounts:.2f} + Kargo ₺{shipping:.2f} + Vergi ₺{tax:.2f}")
-        log_messages.append(f"  ✅ Seçilen: ₺{total_amount} ({source})")
+        log_messages.append(f"  📊 Detay: Subtotal ₺{subtotal:.2f} - İndirim ₺{discounts:.2f} + Kargo ₺{shipping:.2f} + Vergi ₺{tax:.2f}")
+        log_messages.append(f"  🎯 Seçilen Toplam: ₺{total_amount} ({source})")
+        log_messages.append(f"  🏷️ Vergi Dahil Fiyat: EVET (taxesIncluded=true)")
+
         
         # Kaynak veriyi düzenle
         # NOT: Transaction kaldırıldı - Shopify line item'lardan otomatik hesaplasın
@@ -127,8 +129,43 @@ def transfer_order(source_api, destination_api, order_data):
             "lineItems": line_items,
             "shippingAddress": order_data.get('shippingAddress', {}),
             "note": f"Kaynak Mağazadan Aktarılan Sipariş. Orijinal Sipariş No: {order_data.get('name')} | Net Tutar: ₺{total_amount}",
-            "email": order_data.get('customer', {}).get('email')
+            "email": order_data.get('customer', {}).get('email'),
+            "taxesIncluded": True  # ÖNEMLİ: Fiyatlar vergi dahil
         }
+        
+        # Vergi bilgilerini ekle (eğer varsa)
+        if tax > 0:
+            tax_lines = []
+            
+            # Kaynak siparişten vergi bilgilerini al
+            source_tax_lines = order_data.get('taxLines', [])
+            
+            if source_tax_lines:
+                # Kaynak siparişteki vergi satırlarını kullan
+                for tax_line in source_tax_lines:
+                    # GraphQL'den gelen ratePercentage %10 olarak gelir, bunu 0.1'e çevirmemiz gerekiyor
+                    rate_percentage = tax_line.get('ratePercentage', 10)  # Varsayılan %10
+                    rate = float(rate_percentage) / 100  # %10 -> 0.1
+                    
+                    tax_amount = tax_line.get('priceSet', {}).get('shopMoney', {}).get('amount', '0')
+                    
+                    tax_lines.append({
+                        "title": tax_line.get('title', 'KDV % 10 (Dahil)'),
+                        "rate": rate,
+                        "price": str(tax_amount)
+                    })
+                    log_messages.append(f"  📋 Vergi (Dahil): {tax_line.get('title')} - Oran: %{rate_percentage} - Tutar: ₺{tax_amount}")
+            else:
+                # Eğer kaynak siparişteki vergi satırları yoksa, manuel oluştur
+                # Türkiye için varsayılan KDV %10 (dahil)
+                tax_lines.append({
+                    "title": "KDV % 10 (Dahil)",
+                    "rate": 0.1,  # %10
+                    "price": str(tax)
+                })
+                log_messages.append(f"  📋 Vergi (Dahil - manuel): KDV % 10 - Tutar: ₺{tax:.2f}")
+            
+            order_data_for_creation["taxLines"] = tax_lines
         
         # Safe builder ile OrderCreateOrderInput oluştur
         order_input = builder['build_order_input'](order_data_for_creation)

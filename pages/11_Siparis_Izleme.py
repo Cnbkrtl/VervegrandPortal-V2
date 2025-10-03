@@ -310,23 +310,35 @@ if 'shopify_orders_display' in st.session_state:
                         line_items_data = []
                         for item in order.get('lineItems', {}).get('nodes', []):
                             quantity = item.get('quantity', 0)
+                            currency_code = item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('currencyCode', 'TRY')
                             original_price = float(item.get('originalUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
                             discounted_price = float(item.get('discountedUnitPriceSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                            total_discount = float(item.get('totalDiscountSet', {}).get('shopMoney', {}).get('amount', 0.0))
-                            variant = item.get('variant') or {}
                             
+                            # YENİ: Satır bazında vergi tutarını hesapla
+                            tax_amount = sum(float(tax.get('priceSet', {}).get('shopMoney', {}).get('amount', 0.0)) for tax in item.get('taxLines', []))
+
                             line_items_data.append({
                                 "🏷️ Ürün": item.get('title', 'N/A'),
-                                "SKU": variant.get('sku', 'N/A'),
+                                "SKU": (item.get('variant') or {}).get('sku', 'N/A'),
                                 "📦 Adet": quantity,
-                                "💵 Birim Fiyat": f"{original_price:.2f} {currency_code}",
-                                "💰 İndirimli": f"{discounted_price:.2f} {currency_code}" if discounted_price != original_price else "-",
-                                "📊 Toplam": f"{discounted_price * quantity:.2f} {currency_code}",
-                                "🏪 Varyant": variant.get('title', 'Varsayılan')
+                                "💵 Birim Fiyat": original_price,
+                                "💰 İndirimli": discounted_price,
+                                "📊 Vergi": tax_amount, # Vergi tutarı eklendi
+                                "🧾 Toplam": (discounted_price * quantity) + tax_amount # Toplam vergi dahil hesaplandı
                             })
                         
                         df = pd.DataFrame(line_items_data)
-                        st.dataframe(df, use_container_width=True, hide_index=True, height=min(300, len(line_items_data) * 40 + 50))
+                        st.dataframe(
+                            df, 
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "💵 Birim Fiyat": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
+                                "💰 İndirimli": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
+                                "📊 Vergi": st.column_config.NumberColumn(format=f"%.2f {currency_code}"),
+                                "🧾 Toplam": st.column_config.NumberColumn(format=f"%.2f {currency_code}")
+                            }
+                        )
                     
                     with detail_cols[1]:
                         # Müşteri bilgileri

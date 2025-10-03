@@ -110,6 +110,43 @@ def create_order_input_builder():
             
         return line_item if line_item else None
     
+    def build_tax_line(tax_line_data):
+        """OrderCreateOrderTaxLineInput formatında tax line oluşturur"""
+        if not tax_line_data:
+            return None
+        
+        tax_line = {}
+        
+        # Tax title (örn: "KDV % 10 (Dahil)")
+        if tax_line_data.get('title'):
+            tax_line["title"] = tax_line_data.get('title')
+        
+        # Tax rate (örn: 0.1 = %10)
+        if tax_line_data.get('rate') is not None:
+            try:
+                rate = float(tax_line_data.get('rate'))
+                tax_line["rate"] = rate
+            except (ValueError, TypeError):
+                # Geçersiz rate, varsayılan 0.1 kullan
+                tax_line["rate"] = 0.1
+        
+        # Tax price - priceSet formatında
+        if tax_line_data.get('price'):
+            try:
+                price = float(tax_line_data.get('price'))
+                if price >= 0:  # Vergi 0 olabilir
+                    tax_line["priceSet"] = {
+                        "shopMoney": {
+                            "amount": str(price),
+                            "currencyCode": tax_line_data.get('currency', 'TRY')
+                        }
+                    }
+            except (ValueError, TypeError):
+                # Geçersiz price
+                pass
+        
+        return tax_line if tax_line else None
+    
     def build_order_input(order_data):
         """Tam OrderCreateOrderInput oluşturur"""
         order_input = {}
@@ -159,13 +196,30 @@ def create_order_input_builder():
         if order_data.get('email'):
             order_input["email"] = order_data.get('email')
         
+        # Taxes Included (Fiyatlar vergi dahil mi?)
+        # Türkiye'de genellikle fiyatlar KDV dahildir
+        if order_data.get('taxesIncluded') is not None:
+            order_input["taxesIncluded"] = order_data.get('taxesIncluded')
+        
+        # Tax Lines
+        tax_lines_data = order_data.get('taxLines', [])
+        if tax_lines_data:
+            tax_lines = []
+            for tax_data in tax_lines_data:
+                tax = build_tax_line(tax_data)
+                if tax:
+                    tax_lines.append(tax)
+            if tax_lines:
+                order_input["taxLines"] = tax_lines
+        
         return order_input
     
     return {
         'build_order_input': build_order_input,
         'build_mailing_address': build_mailing_address,
         'build_transaction': build_transaction,
-        'build_line_item': build_line_item
+        'build_line_item': build_line_item,
+        'build_tax_line': build_tax_line
     }
 
 def test_builder():

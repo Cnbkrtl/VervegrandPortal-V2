@@ -253,7 +253,20 @@ class ShopifyAPI:
                     }
                     originalUnitPriceSet { shopMoney { amount currencyCode } }
                     discountedUnitPriceSet { shopMoney { amount currencyCode } }
+                    taxable # Vergiye tabi olup olmadığını belirtir
+                    taxLines { # Satıra uygulanan vergilerin listesi
+                      priceSet { shopMoney { amount, currencyCode } }
+                      ratePercentage
+                      title
+                    }
                   }
+                }
+                
+                # Siparişin genel vergi dökümü
+                taxLines {
+                  priceSet { shopMoney { amount, currencyCode } }
+                  ratePercentage
+                  title
                 }
                 
                 shippingAddress {
